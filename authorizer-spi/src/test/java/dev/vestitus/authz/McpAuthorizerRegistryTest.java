@@ -26,6 +26,7 @@ class McpAuthorizerRegistryTest {
         var reg = McpAuthorizerRegistry.of(Map.of("mcp-a", new DenyAllAuthorizer()));
         assertFalse(reg.authorize("mcp-unknown", req()).allowed());
         assertFalse(reg.authorize(" ", req()).allowed());
+        assertFalse(reg.authorize(null, req()).allowed());
     }
 
     @Test
@@ -61,5 +62,8 @@ class McpAuthorizerRegistryTest {
         var bad = new HashMap<String, Authorizer>();
         bad.put(" ", new DenyAllAuthorizer());
         assertThrows(IllegalArgumentException.class, () -> McpAuthorizerRegistry.of(bad));
+        var nullVal = new HashMap<String, Authorizer>();
+        nullVal.put("mcp-a", null);
+        assertThrows(IllegalArgumentException.class, () -> McpAuthorizerRegistry.of(nullVal));
     }
 }
