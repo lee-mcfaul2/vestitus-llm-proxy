@@ -35,6 +35,44 @@ diagnostics string lets the caller log + emit a reason-labeled metric
 - Build/test: `cargo test --locked`.
 - Not a Maven module — built by cargo; wired into the JVM build via FFM in 03d.
 
-Coming next: hermetic reproducible + cosign-keyless/SLSA-attested native build
-(03c); jextract/FFM Java bindings + the Cedar-backed `Authorizer` impl plugging
-the `authorizer-spi` SPI (03d); CI Cedar-CLI static-analysis gate (03e).
+## Plan 03c — container-hermetic reproducible + attested native build
+
+`libcedar_cabi.so` is never built on a developer box. It is compiled only in
+GitHub Actions, inside a **SHA-pinned hermetic container**, and proven
+reproducible before it is attested or signed:
+
+- `Dockerfile.build` pins the Rust 1.94.1 build environment; its base image is
+  pinned by `@sha256:` digest. `cedar-cabi-build-container.yml` builds that image,
+  pushes it to GHCR, and attests the image with SLSA build provenance.
+- `cedar-cabi-release.yml` (trigger: a `cedar-cabi-v*` tag) runs the build in
+  **two independent instances of that pinned container** and byte-compares the
+  two `libcedar_cabi.so`. The release **fails closed** unless the two are
+  byte-identical — non-reproducible output is never published.
+- Only on an identical pair does it produce **SLSA L3 build provenance**
+  (`actions/attest-build-provenance`) and a **keyless cosign** detached
+  signature (`cosign sign-blob`, Sigstore bundle, no long-lived key), then
+  upload `libcedar_cabi.so`, its `.sha256`, and `libcedar_cabi.so.sigstore` to
+  the tag's GitHub release. Build jobs are credential-minimal; only the final
+  publish job holds `id-token` / `attestations` / `contents: write`.
+- `scripts/check_release_hardening.py` (run by `supply-chain-invariants.yml`)
+  is a deterministic, dependency-free regression gate over the release
+  workflows: every action SHA-pinned, the build container digest-pinned, no
+  `curl | sh`, fail-closed cosign checksum, fork/tag-ref guards.
+
+The build container is referenced from the release workflow **by immutable
+`@sha256:` digest**, not a tag, so the hermetic environment cannot change under
+the pipeline.
+
+### Verifying a released `libcedar_cabi.so` (downstream consumers)
+
+```sh
+gh attestation verify libcedar_cabi.so --owner lee-mcfaul2
+
+cosign verify-blob --bundle libcedar_cabi.so.sigstore --new-bundle-format \
+  --certificate-identity-regexp '.*cedar-cabi-release.yml@refs/tags/cedar-cabi-v.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  libcedar_cabi.so
+```
+
+Coming next: jextract/FFM Java bindings + the Cedar-backed `Authorizer` impl
+plugging the `authorizer-spi` SPI (03d); CI Cedar-CLI static-analysis gate (03e).
