@@ -129,6 +129,10 @@ class CedarAuthorizerTest {
         assertFalse(b.allowed());
         assertInstanceOf(AuthorizationDecision.Deny.class, a);
         assertInstanceOf(AuthorizationDecision.Deny.class, b);
+        assertTrue(((AuthorizationDecision.Deny) a).reason().toLowerCase().contains("injectiv"),
+            "branch a must be denied by the injectivity guard, not an incidental Cedar non-match");
+        assertTrue(((AuthorizationDecision.Deny) b).reason().toLowerCase().contains("injectiv"),
+            "branch b must be denied by the injectivity guard, not an incidental Cedar non-match");
     }
 
     @Test
@@ -141,5 +145,7 @@ class CedarAuthorizerTest {
             Map.of()));
         assertFalse(d.allowed());
         assertInstanceOf(AuthorizationDecision.Deny.class, d);
+        assertTrue(((AuthorizationDecision.Deny) d).reason().toLowerCase().contains("injectiv"),
+            "control-char component must be denied by the injectivity guard");
     }
 }
