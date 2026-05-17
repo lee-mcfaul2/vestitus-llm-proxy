@@ -52,6 +52,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # The job runs as root inside the container; actions/checkout's
+          # safe.directory entry was written for a different user, so mark
+          # the checked-out workspace safe before invoking git.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           SDE="$(git -C .. show -s --format=%ct HEAD)"
           export SOURCE_DATE_EPOCH="$SDE"
           export RUSTFLAGS="--remap-path-prefix $PWD=. --remap-path-prefix ${CARGO_HOME:-/usr/local/cargo}=cargo"
