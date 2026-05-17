@@ -46,6 +46,10 @@ jobs:
           persist-credentials: false
       - name: Reproducible build inside the pinned container
         working-directory: cedar-cabi
+        # The build job runs inside the container, where GitHub's default
+        # run-shell is sh (dash) and lacks `pipefail`; bash ships in the
+        # rust:bookworm image and keeps the sha256sum|tee pipe fail-closed.
+        shell: bash
         run: |
           set -euo pipefail
           SDE="$(git -C .. show -s --format=%ct HEAD)"
