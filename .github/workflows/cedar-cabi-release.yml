@@ -1,0 +1,137 @@
+name: cedar-cabi attested release
+
+on:
+  push:
+    tags: ['cedar-cabi-v*']
+  workflow_dispatch:
+    inputs:
+      tag: { description: 'cedar-cabi-v* tag to build & attest', required: true }
+
+permissions: {}
+
+env:
+  # SHA-pinned hermetic build container (published by cedar-cabi-build-container.yml).
+  CEDAR_BUILD_IMAGE: ghcr.io/lee-mcfaul2/cedar-cabi-build@sha256:REPLACE_AFTER_FIRST_CONTAINER_PUBLISH
+
+jobs:
+  preflight:
+    name: Enforce tag-ref dispatch
+    if: github.repository == 'lee-mcfaul2/vestitus-llm-proxy'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a cedar-cabi tag ref
+        env: { REF: "${{ github.ref }}", IN: "${{ github.event.inputs.tag }}" }
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            case "$IN" in cedar-cabi-v*) : ;; *) echo "::error::dispatch tag must match cedar-cabi-v*"; exit 1;; esac
+          else
+            case "$REF" in refs/tags/cedar-cabi-v*) : ;; *) echo "::error::only runs on refs/tags/cedar-cabi-v*"; exit 1;; esac
+          fi
+
+  build:
+    name: In-container build (instance ${{ matrix.instance }})
+    needs: preflight
+    if: github.repository == 'lee-mcfaul2/vestitus-llm-proxy'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: { instance: [1, 2] }
+    permissions:
+      contents: read            # NO id-token, NO attestations here by design
+    container:
+      image: ${{ env.CEDAR_BUILD_IMAGE }}   # SHA-pinned hermetic env
+    steps:
+      - name: Checkout the tag
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          persist-credentials: false
+      - name: Reproducible build inside the pinned container
+        working-directory: cedar-cabi
+        run: |
+          set -euo pipefail
+          SDE="$(git -C .. show -s --format=%ct HEAD)"
+          export SOURCE_DATE_EPOCH="$SDE"
+          export RUSTFLAGS="--remap-path-prefix $PWD=. --remap-path-prefix ${CARGO_HOME:-/usr/local/cargo}=cargo"
+          cargo build --release --locked --lib
+          test -f target/release/libcedar_cabi.so
+          sha256sum target/release/libcedar_cabi.so | tee "libcedar_cabi.so.sha256.${{ matrix.instance }}"
+      - name: Upload instance artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: cedar-cabi-build-${{ matrix.instance }}
+          path: |
+            cedar-cabi/target/release/libcedar_cabi.so
+            cedar-cabi/libcedar_cabi.so.sha256.${{ matrix.instance }}
+          if-no-files-found: error
+          retention-days: 1
+
+  reproducibility-gate:
+    name: Byte-compare the two container builds
+    needs: build
+    if: github.repository == 'lee-mcfaul2/vestitus-llm-proxy'
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
+    steps:
+      - name: Download instance 1
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with: { name: cedar-cabi-build-1, path: i1 }
+      - name: Download instance 2
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with: { name: cedar-cabi-build-2, path: i2 }
+      - name: Fail closed unless byte-identical
+        run: |
+          set -euo pipefail
+          h1="$(sha256sum i1/target/release/libcedar_cabi.so | awk '{print $1}')"
+          h2="$(sha256sum i2/target/release/libcedar_cabi.so | awk '{print $1}')"
+          echo "instance1=$h1"; echo "instance2=$h2"
+          if [ "$h1" != "$h2" ]; then
+            echo "::error::libcedar_cabi.so NOT reproducible across container instances ($h1 != $h2)"; exit 1
+          fi
+          cmp i1/target/release/libcedar_cabi.so i2/target/release/libcedar_cabi.so
+          echo "REPRODUCIBLE=$h1" >> "$GITHUB_STEP_SUMMARY"
+
+  attest-sign-publish:
+    name: Attest + keyless cosign + release
+    needs: reproducibility-gate
+    if: github.repository == 'lee-mcfaul2/vestitus-llm-proxy'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download the verified-identical binary
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with: { name: cedar-cabi-build-1, path: dist }
+      - name: SLSA build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32  # v4.1.0
+        with:
+          subject-path: dist/target/release/libcedar_cabi.so
+      - name: Install cosign (pinned, checksum-verified, no curl|bash)
+        env: { COSIGN_VERSION: v3.0.6 }
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin"
+          base="https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}"
+          curl -fsSL -o /tmp/cosign "${base}/cosign-linux-amd64"
+          curl -fsSL -o /tmp/sums "${base}/cosign_checksums.txt"
+          want="$(grep ' cosign-linux-amd64$' /tmp/sums | awk '{print $1}')"
+          got="$(sha256sum /tmp/cosign | awk '{print $1}')"
+          [ -n "$want" ] && [ "$want" = "$got" ] || { echo "::error::cosign checksum mismatch"; exit 1; }
+          install -m 0755 /tmp/cosign "$HOME/.local/bin/cosign"; echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Keyless detached signature
+        run: |
+          set -euo pipefail
+          cd dist/target/release
+          cosign sign-blob --yes --bundle libcedar_cabi.so.sigstore --new-bundle-format libcedar_cabi.so
+      - name: Publish attested binary to the release
+        env: { GH_TOKEN: "${{ github.token }}", TAG: "${{ github.event.inputs.tag || github.ref_name }}" }
+        run: |
+          set -euo pipefail
+          cd dist/target/release
+          sha256sum libcedar_cabi.so > libcedar_cabi.so.sha256
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "cedar-cabi attested native build"
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            libcedar_cabi.so libcedar_cabi.so.sha256 libcedar_cabi.so.sigstore
