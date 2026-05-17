@@ -5,6 +5,8 @@
 
 use std::ffi::{c_char, CStr, CString};
 use std::ptr;
+use cedar_policy::{Authorizer, Context, Decision, Entities, EntityUid, PolicySet, Request};
+use std::str::FromStr;
 
 // `ffi_guard` relies on `catch_unwind`, which is a silent no-op under
 // `panic = "abort"`. A future build profile that sets abort would invisibly
@@ -87,9 +89,188 @@ pub unsafe extern "C" fn cedar_string_free(s: *mut c_char) {
     drop(CString::from_raw(s));
 }
 
+/// Authorize one request. Fail-closed: returns `Allow` (1) ONLY on a clean
+/// Cedar `Decision::Allow`; `Deny` (0) on a clean deny (reasons/errors in
+/// `*out_diag`); `Error` (-1) on any null arg, parse/validation/eval failure,
+/// or panic (message in `*out_diag`). The non-Allow diagnostics string lets the
+/// caller log + emit a reason-labeled metric (spec §6 inv.7; §7 "engine error
+/// => deny, never pass-through"). `context_json` is a JSON object (`{}` = none);
+/// `entities_json` is a JSON array (`[]` = none).
+///
+/// # Safety
+/// All pointers must be valid NUL-terminated C strings (or null, which is a
+/// fail-closed Error). `out_diag` must be a valid pointer to a writable pointer.
+#[no_mangle]
+pub unsafe extern "C" fn cedar_is_authorized(
+    policies: *const c_char,
+    principal: *const c_char,
+    action: *const c_char,
+    resource: *const c_char,
+    context_json: *const c_char,
+    entities_json: *const c_char,
+    out_diag: *mut *mut c_char,
+) -> CedarResult {
+    if out_diag.is_null() {
+        return CedarResult::Error;
+    }
+    let out = &mut *out_diag;
+    *out = ptr::null_mut();
+
+    // Copy borrowed inputs into owned Strings BEFORE catch_unwind
+    // (raw ptrs are not UnwindSafe; owned String is).
+    let inputs = (|| {
+        Ok::<_, String>((
+            cstr_in(policies)?,
+            cstr_in(principal)?,
+            cstr_in(action)?,
+            cstr_in(resource)?,
+            cstr_in(context_json)?,
+            cstr_in(entities_json)?,
+        ))
+    })();
+    let (pol, prin, act, res, ctx, ents) = match inputs {
+        Ok(v) => v,
+        Err(e) => {
+            *out = into_c_string(&e);
+            return CedarResult::Error;
+        }
+    };
+
+    let result: Result<(CedarResult, Option<String>), String> =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let policy_set =
+                PolicySet::from_str(&pol).map_err(|e| format!("policy parse error: {e}"))?;
+            let principal_uid =
+                EntityUid::from_str(&prin).map_err(|e| format!("principal uid error: {e}"))?;
+            let action_uid =
+                EntityUid::from_str(&act).map_err(|e| format!("action uid error: {e}"))?;
+            let resource_uid =
+                EntityUid::from_str(&res).map_err(|e| format!("resource uid error: {e}"))?;
+            let context = Context::from_json_str(&ctx, None)
+                .map_err(|e| format!("context json error: {e}"))?;
+            let entities = Entities::from_json_str(&ents, None)
+                .map_err(|e| format!("entities json error: {e}"))?;
+            let request =
+                Request::new(principal_uid, action_uid, resource_uid, context, None)
+                    .map_err(|e| format!("request error: {e}"))?;
+            let response =
+                Authorizer::new().is_authorized(&request, &policy_set, &entities);
+            match response.decision() {
+                Decision::Allow => Ok((CedarResult::Allow, None)),
+                Decision::Deny => {
+                    let reasons: Vec<String> =
+                        response.diagnostics().reason().map(|p| p.to_string()).collect();
+                    let errs: Vec<String> =
+                        response.diagnostics().errors().map(|e| e.to_string()).collect();
+                    let mut msg = String::from("deny");
+                    if !reasons.is_empty() {
+                        msg.push_str(&format!("; reasons=[{}]", reasons.join(",")));
+                    }
+                    if !errs.is_empty() {
+                        msg.push_str(&format!("; errors=[{}]", errs.join("; ")));
+                    }
+                    Ok((CedarResult::Deny, Some(msg)))
+                }
+            }
+        }))
+        .unwrap_or_else(|p| {
+            let m = p
+                .downcast_ref::<&str>()
+                .map(|s| s.to_string())
+                .or_else(|| p.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unknown".to_string());
+            Err(format!("panic in cedar-cabi: {m}"))
+        });
+
+    match result {
+        Ok((CedarResult::Allow, _)) => CedarResult::Allow,
+        Ok((CedarResult::Deny, diag)) => {
+            if let Some(d) = diag {
+                *out = into_c_string(&d);
+            }
+            CedarResult::Deny
+        }
+        Ok((other, _)) => {
+            *out = into_c_string(&format!("unexpected code {other:?} (fail-closed)"));
+            CedarResult::Error
+        }
+        Err(msg) => {
+            *out = into_c_string(&msg);
+            CedarResult::Error
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::CString;
+
+    fn cs(s: &str) -> CString { CString::new(s).unwrap() }
+
+    fn call_authz(
+        policies: &str, principal: &str, action: &str, resource: &str,
+        context_json: &str, entities_json: &str,
+    ) -> (CedarResult, Option<String>) {
+        let (p, pr, a, r, c, e) =
+            (cs(policies), cs(principal), cs(action), cs(resource), cs(context_json), cs(entities_json));
+        let mut diag: *mut c_char = ptr::null_mut();
+        let code = unsafe {
+            cedar_is_authorized(p.as_ptr(), pr.as_ptr(), a.as_ptr(), r.as_ptr(),
+                                c.as_ptr(), e.as_ptr(), &mut diag)
+        };
+        let d = if diag.is_null() { None } else {
+            let s = unsafe { CStr::from_ptr(diag) }.to_string_lossy().into_owned();
+            unsafe { cedar_string_free(diag) };
+            Some(s)
+        };
+        (code, d)
+    }
+
+    #[test]
+    fn matching_permit_allows() {
+        let (code, _) = call_authz(
+            r#"permit(principal == User::"alice", action == Action::"view", resource == Resource::"doc1");"#,
+            r#"User::"alice""#, r#"Action::"view""#, r#"Resource::"doc1""#, "{}", "[]");
+        assert_eq!(code, CedarResult::Allow);
+    }
+
+    #[test]
+    fn no_matching_policy_denies() {
+        let (code, _) = call_authz(
+            r#"permit(principal == User::"bob", action == Action::"view", resource == Resource::"doc1");"#,
+            r#"User::"alice""#, r#"Action::"view""#, r#"Resource::"doc1""#, "{}", "[]");
+        assert_eq!(code, CedarResult::Deny);
+    }
+
+    #[test]
+    fn malformed_policy_errors_never_allows() {
+        let (code, diag) = call_authz(
+            "this is not cedar", r#"User::"alice""#, r#"Action::"view""#,
+            r#"Resource::"doc1""#, "{}", "[]");
+        assert_eq!(code, CedarResult::Error);
+        assert_ne!(code, CedarResult::Allow);
+        assert!(diag.unwrap_or_default().to_lowercase().contains("polic"));
+    }
+
+    #[test]
+    fn bad_entity_uid_errors_never_allows() {
+        let (code, _) = call_authz(
+            r#"permit(principal, action, resource);"#,
+            "not a uid", r#"Action::"view""#, r#"Resource::"doc1""#, "{}", "[]");
+        assert_eq!(code, CedarResult::Error);
+    }
+
+    #[test]
+    fn null_pointer_arg_errors_never_allows() {
+        let mut diag: *mut c_char = ptr::null_mut();
+        let code = unsafe {
+            cedar_is_authorized(ptr::null(), ptr::null(), ptr::null(),
+                                ptr::null(), ptr::null(), ptr::null(), &mut diag)
+        };
+        assert_eq!(code, CedarResult::Error);
+        if !diag.is_null() { unsafe { cedar_string_free(diag) }; }
+    }
 
     #[test]
     fn string_free_handles_null_and_owned() {

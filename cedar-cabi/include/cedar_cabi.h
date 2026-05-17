@@ -8,6 +8,25 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+/**
+ * Result codes for the C ABI. Fail-closed: only a clean Cedar `Decision::Allow`
+ * (resp. a passing validation) yields `Allow`/`Valid`.
+ */
+enum CedarResult
+#ifdef __cplusplus
+  : int32_t
+#endif // __cplusplus
+ {
+  Deny = 0,
+  Allow = 1,
+  Valid = 2,
+  Invalid = 3,
+  Error = -1,
+};
+#ifndef __cplusplus
+typedef int32_t CedarResult;
+#endif // __cplusplus
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -19,6 +38,27 @@ extern "C" {
  * `s` must be a pointer returned by a `cedar-cabi` function and not freed before.
  */
 void cedar_string_free(char *s);
+
+/**
+ * Authorize one request. Fail-closed: returns `Allow` (1) ONLY on a clean
+ * Cedar `Decision::Allow`; `Deny` (0) on a clean deny (reasons/errors in
+ * `*out_diag`); `Error` (-1) on any null arg, parse/validation/eval failure,
+ * or panic (message in `*out_diag`). The non-Allow diagnostics string lets the
+ * caller log + emit a reason-labeled metric (spec §6 inv.7; §7 "engine error
+ * => deny, never pass-through"). `context_json` is a JSON object (`{}` = none);
+ * `entities_json` is a JSON array (`[]` = none).
+ *
+ * # Safety
+ * All pointers must be valid NUL-terminated C strings (or null, which is a
+ * fail-closed Error). `out_diag` must be a valid pointer to a writable pointer.
+ */
+CedarResult cedar_is_authorized(const char *policies,
+                                const char *principal,
+                                const char *action,
+                                const char *resource,
+                                const char *context_json,
+                                const char *entities_json,
+                                char **out_diag);
 
 #ifdef __cplusplus
 }  // extern "C"
