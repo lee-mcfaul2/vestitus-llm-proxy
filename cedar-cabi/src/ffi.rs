@@ -52,31 +52,6 @@ pub(crate) fn cstr_in(p: *const c_char) -> Result<String, String> {
         .map_err(|e| format!("invalid utf-8 in argument: {e}"))
 }
 
-/// Run `f` with panic protection. On `Ok(code)` -> that code, no diagnostics.
-/// On `Err(msg)` or a panic -> `CedarResult::Error` and `*out_diag` set to an
-/// owned C string (caller frees). Fail-closed by construction.
-pub(crate) fn ffi_guard<F>(out_diag: &mut *mut c_char, f: F) -> CedarResult
-where
-    F: FnOnce() -> Result<CedarResult, String> + std::panic::UnwindSafe,
-{
-    match std::panic::catch_unwind(f) {
-        Ok(Ok(code)) => code,
-        Ok(Err(msg)) => {
-            *out_diag = into_c_string(&msg);
-            CedarResult::Error
-        }
-        Err(panic) => {
-            let msg = panic
-                .downcast_ref::<&str>()
-                .map(|s| s.to_string())
-                .or_else(|| panic.downcast_ref::<String>().cloned())
-                .unwrap_or_else(|| "unknown".to_string());
-            *out_diag = into_c_string(&format!("panic in cedar-cabi: {msg}"));
-            CedarResult::Error
-        }
-    }
-}
-
 /// Free a string previously returned by this library. Null is a safe no-op.
 ///
 /// # Safety
@@ -281,22 +256,50 @@ mod tests {
     }
 
     #[test]
-    fn guard_catches_panic_as_error() {
-        let mut diag: *mut c_char = ptr::null_mut();
-        let code = ffi_guard(&mut diag, || panic!("boom"));
+    fn null_out_diag_pointer_errors() {
+        // The one Error exit where no diagnostic can be written (out_diag itself null).
+        let (p, pr, a, r, c, e) = (
+            cs(r#"permit(principal, action, resource);"#),
+            cs(r#"User::"alice""#), cs(r#"Action::"view""#), cs(r#"Resource::"doc1""#),
+            cs("{}"), cs("[]"));
+        let code = unsafe {
+            cedar_is_authorized(p.as_ptr(), pr.as_ptr(), a.as_ptr(), r.as_ptr(),
+                                c.as_ptr(), e.as_ptr(), ptr::null_mut())
+        };
         assert_eq!(code, CedarResult::Error);
-        assert!(!diag.is_null());
-        let msg = unsafe { CStr::from_ptr(diag) }.to_string_lossy().into_owned();
-        assert!(msg.contains("panic"), "diag should mention panic, got: {msg}");
-        unsafe { cedar_string_free(diag) };
+        assert_ne!(code, CedarResult::Allow);
     }
 
     #[test]
-    fn guard_passes_through_ok_and_sets_no_diag() {
-        let mut diag: *mut c_char = ptr::null_mut();
-        let code = ffi_guard(&mut diag, || Ok(CedarResult::Allow));
-        assert_eq!(code, CedarResult::Allow);
-        assert!(diag.is_null(), "no diagnostics on success");
+    fn malformed_context_json_errors_never_allows() {
+        let (code, _) = call_authz(
+            r#"permit(principal, action, resource);"#,
+            r#"User::"alice""#, r#"Action::"view""#, r#"Resource::"doc1""#,
+            "not json", "[]");
+        assert_eq!(code, CedarResult::Error);
+        assert_ne!(code, CedarResult::Allow);
+    }
+
+    #[test]
+    fn malformed_entities_json_errors_never_allows() {
+        let (code, _) = call_authz(
+            r#"permit(principal, action, resource);"#,
+            r#"User::"alice""#, r#"Action::"view""#, r#"Resource::"doc1""#,
+            "{}", "not an array");
+        assert_eq!(code, CedarResult::Error);
+        assert_ne!(code, CedarResult::Allow);
+    }
+
+    #[test]
+    fn forbid_overrides_permit_denies_with_diagnostic() {
+        // Cedar: an applicable forbid always overrides permit => Deny, with the
+        // Deny diagnostic string populated (proves the Deny out_diag plumbing).
+        let (code, diag) = call_authz(
+            r#"permit(principal, action, resource); forbid(principal == User::"alice", action, resource);"#,
+            r#"User::"alice""#, r#"Action::"view""#, r#"Resource::"doc1""#, "{}", "[]");
+        assert_eq!(code, CedarResult::Deny);
+        let d = diag.expect("Deny must carry a diagnostic string");
+        assert!(d.contains("deny"), "diagnostic should start with 'deny', got: {d}");
     }
 
     #[test]
