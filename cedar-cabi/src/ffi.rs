@@ -6,9 +6,15 @@
 use std::ffi::{c_char, CStr, CString};
 use std::ptr;
 
+// `ffi_guard` relies on `catch_unwind`, which is a silent no-op under
+// `panic = "abort"`. A future build profile that sets abort would invisibly
+// break the fail-closed guarantee, so refuse to compile in that configuration.
+#[cfg(panic = "abort")]
+compile_error!("cedar-cabi requires panic=unwind: catch_unwind is the fail-closed boundary");
+
 /// Result codes for the C ABI. Fail-closed: only a clean Cedar `Decision::Allow`
 /// (resp. a passing validation) yields `Allow`/`Valid`.
-#[repr(C)]
+#[repr(i32)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum CedarResult {
     Deny = 0,
@@ -19,21 +25,28 @@ pub enum CedarResult {
 }
 
 /// Allocate a C string owned by Rust. Returned pointer must be freed with
-/// `cedar_string_free`. Returns null only on interior-NUL (then the message is lost).
+/// `cedar_string_free`. Never returns null for a real message: interior NUL
+/// bytes are scrubbed to `?` so a fail-closed diagnostic is never silently
+/// dropped (spec §6 inv.7 — every fail-closed branch must stay observable).
 pub(crate) fn into_c_string(s: &str) -> *mut c_char {
-    match CString::new(s) {
+    let sanitized = s.replace('\0', "?");
+    match CString::new(sanitized) {
         Ok(c) => c.into_raw(),
+        // Unreachable in practice (NUL scrubbed above); stay fail-safe regardless.
         Err(_) => ptr::null_mut(),
     }
 }
 
-/// Borrow a C string as `&str`. Error (never panic) on null or invalid UTF-8.
-pub(crate) fn cstr_in<'a>(p: *const c_char) -> Result<&'a str, String> {
+/// Copy a C string into an owned `String`. Error (never panic) on null or
+/// invalid UTF-8. Returns an owned value by design: the unsafe borrow is
+/// confined here and never escapes with a caller-chosen lifetime.
+pub(crate) fn cstr_in(p: *const c_char) -> Result<String, String> {
     if p.is_null() {
         return Err("null pointer argument".to_string());
     }
     unsafe { CStr::from_ptr(p) }
         .to_str()
+        .map(|s| s.to_owned())
         .map_err(|e| format!("invalid utf-8 in argument: {e}"))
 }
 
@@ -111,5 +124,14 @@ mod tests {
         let s = into_c_string("x");
         assert_eq!(cstr_in(s).unwrap(), "x");
         unsafe { cedar_string_free(s) };
+    }
+
+    #[test]
+    fn into_c_string_scrubs_interior_nul_never_null() {
+        let p = into_c_string("bad\0msg");
+        assert!(!p.is_null(), "interior NUL must be scrubbed, not dropped");
+        let got = unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned();
+        assert_eq!(got, "bad?msg");
+        unsafe { cedar_string_free(p) };
     }
 }
