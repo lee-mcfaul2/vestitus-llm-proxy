@@ -1,0 +1,14 @@
+# Hermetic build environment for libcedar_cabi (Plan 03c / spec §8 / ADR-001).
+# Base pinned by digest; Rust is the image's pinned 1.94.1 toolchain. The
+# crate source is NOT baked in — the release workflow mounts the checked-out
+# repo and runs the reproducible `cargo build` inside this container so two
+# independent container instances produce a byte-identical libcedar_cabi.so.
+FROM rust:1.94.1-bookworm@sha256:6ae102bdbf528294bc79ad6e1fae682f6f7c2a6e6621506ba959f9685b308a55
+
+ENV DEBIAN_FRONTEND=noninteractive LC_ALL=C TZ=UTC
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential pkg-config \
+ && rm -rf /var/lib/apt/lists/*
+
+ENV CARGO_TERM_COLOR=never SOURCE_DATE_EPOCH=1700000000
+WORKDIR /work

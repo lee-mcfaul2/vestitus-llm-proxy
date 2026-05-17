@@ -1,0 +1,50 @@
+name: cedar-cabi build container
+
+on:
+  workflow_dispatch:
+  push:
+    paths: ['cedar-cabi/Dockerfile.build', '.github/workflows/cedar-cabi-build-container.yml']
+
+permissions: {}
+
+jobs:
+  publish-build-container:
+    if: github.repository == 'lee-mcfaul2/vestitus-llm-proxy'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Log in to GHCR
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef  # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435  # v3.11.1
+      - name: Build & push (digest captured)
+        id: bp
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83  # v6.18.0
+        with:
+          context: cedar-cabi
+          file: cedar-cabi/Dockerfile.build
+          push: true
+          tags: ghcr.io/lee-mcfaul2/cedar-cabi-build:latest
+          provenance: false
+      - name: Attest the build container image
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32  # v4.1.0
+        with:
+          subject-name: ghcr.io/lee-mcfaul2/cedar-cabi-build
+          subject-digest: ${{ steps.bp.outputs.digest }}
+          push-to-registry: true
+      - name: Surface the pinned reference
+        run: |
+          echo "PIN THIS IN cedar-cabi-release.yml:" >> "$GITHUB_STEP_SUMMARY"
+          echo "ghcr.io/lee-mcfaul2/cedar-cabi-build@${{ steps.bp.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
