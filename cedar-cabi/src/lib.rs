@@ -48,4 +48,12 @@ mod header_tests {
         assert!(h.contains("CEDAR_CABI_H"), "header missing include guard");
         assert!(h.contains("cedar_string_free"), "header missing cedar_string_free decl");
     }
+
+    #[test]
+    fn header_declares_all_three_entrypoints() {
+        let h = include_str!("../include/cedar_cabi.h");
+        for sym in ["cedar_is_authorized", "cedar_validate", "cedar_string_free", "CedarResult"] {
+            assert!(h.contains(sym), "generated header missing `{sym}` — run `cargo build` to regenerate");
+        }
+    }
 }
