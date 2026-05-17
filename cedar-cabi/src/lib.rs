@@ -2,6 +2,8 @@
 //! 03a scope = probe only: prove the pinned Cedar API round-trips.
 //! The extern "C" ABI is added in a later sub-plan.
 
+pub mod ffi;
+
 #[cfg(test)]
 mod tests {
     use cedar_policy::{Authorizer, Context, Decision, Entities, PolicySet, Request};

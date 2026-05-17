@@ -8,4 +8,20 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif // __cplusplus
+
+/**
+ * Free a string previously returned by this library. Null is a safe no-op.
+ *
+ * # Safety
+ * `s` must be a pointer returned by a `cedar-cabi` function and not freed before.
+ */
+void cedar_string_free(char *s);
+
+#ifdef __cplusplus
+}  // extern "C"
+#endif  // __cplusplus
+
 #endif  /* CEDAR_CABI_H */
