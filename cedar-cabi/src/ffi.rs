@@ -8,9 +8,9 @@ use std::ptr;
 use cedar_policy::{Authorizer, Context, Decision, Entities, EntityUid, PolicySet, Request};
 use std::str::FromStr;
 
-// `ffi_guard` relies on `catch_unwind`, which is a silent no-op under
-// `panic = "abort"`. A future build profile that sets abort would invisibly
-// break the fail-closed guarantee, so refuse to compile in that configuration.
+// The C entrypoints rely on `catch_unwind` as the fail-closed boundary, which
+// is a silent no-op under `panic = "abort"`. A future build profile that sets
+// abort would invisibly break that guarantee, so refuse to compile in it.
 #[cfg(panic = "abort")]
 compile_error!("cedar-cabi requires panic=unwind: catch_unwind is the fail-closed boundary");
 
