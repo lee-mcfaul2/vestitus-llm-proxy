@@ -183,6 +183,13 @@ pub unsafe extern "C" fn cedar_is_authorized(
 /// diagnostics string lets the caller log + emit a reason-labeled metric
 /// (spec §6 inv.7). `schema_src` is Cedar human schema syntax (`.cedarschema`).
 ///
+/// Scope boundary: this is a *runtime* type/schema conformance check.
+/// `Valid` means cedar reported no validation **errors** under Strict mode;
+/// validation **warnings** (e.g. `ImpossiblePolicy` / always-false rules) do
+/// NOT make it `Invalid` here. The deeper rejection of self-permissive /
+/// identity-less / analysis-hostile rulesets (spec §9) is the Cedar-CLI
+/// static-analysis registration gate (sub-plan 03e), not this shim entrypoint.
+///
 /// # Safety
 /// Pointers must be valid NUL-terminated C strings (or null => Error).
 /// `out_diag` must point to a writable pointer.
@@ -215,7 +222,9 @@ pub unsafe extern "C" fn cedar_validate(
                 Schema::from_str(&schema_s).map_err(|e| format!("schema parse error: {e}"))?;
             let pset =
                 PolicySet::from_str(&pol_s).map_err(|e| format!("policy parse error: {e}"))?;
-            let vr = Validator::new(schema).validate(&pset, ValidationMode::default());
+            // Explicit Strict (not `::default()`): a security gate must not rely
+            // on cedar's implicit default; Strict is the analysis-amenable mode.
+            let vr = Validator::new(schema).validate(&pset, ValidationMode::Strict);
             if vr.validation_passed() {
                 Ok((CedarResult::Valid, None))
             } else {
@@ -427,7 +436,13 @@ mod tests {
             HELLO_SCHEMA,
             r#"permit(principal == User::"alice", action == Action::"delete", resource == Resource::"doc1");"#);
         assert_eq!(code, CedarResult::Invalid);
-        assert!(diag.unwrap_or_default().len() > 0, "invalid result must carry messages");
+        let d = diag.unwrap_or_default();
+        assert!(!d.is_empty(), "invalid result must carry messages");
+        // message must be meaningful, not a non-empty placeholder
+        assert!(
+            d.contains("delete") || d.to_lowercase().contains("action"),
+            "validation message should describe the offending action, got: {d}"
+        );
     }
 
     #[test]
@@ -440,6 +455,18 @@ mod tests {
     fn unparseable_policy_errors() {
         let (code, _) = call_validate(HELLO_SCHEMA, "not a policy");
         assert_eq!(code, CedarResult::Error);
+    }
+
+    #[test]
+    fn warning_only_policy_is_still_valid_by_design() {
+        // A type-correct but always-false policy yields a cedar *warning*
+        // (ImpossiblePolicy), not an error. By design this runtime gate returns
+        // Valid (warnings don't block here; the deep analysis gate is 03e).
+        // This test pins that deliberate boundary so a behavior change is loud.
+        let (code, _) = call_validate(
+            HELLO_SCHEMA,
+            r#"permit(principal == User::"alice", action == Action::"view", resource == Resource::"doc1") when { false };"#);
+        assert_eq!(code, CedarResult::Valid);
     }
 
     #[test]

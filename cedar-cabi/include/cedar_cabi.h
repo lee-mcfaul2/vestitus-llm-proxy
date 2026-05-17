@@ -68,6 +68,13 @@ CedarResult cedar_is_authorized(const char *policies,
  * diagnostics string lets the caller log + emit a reason-labeled metric
  * (spec §6 inv.7). `schema_src` is Cedar human schema syntax (`.cedarschema`).
  *
+ * Scope boundary: this is a *runtime* type/schema conformance check.
+ * `Valid` means cedar reported no validation **errors** under Strict mode;
+ * validation **warnings** (e.g. `ImpossiblePolicy` / always-false rules) do
+ * NOT make it `Invalid` here. The deeper rejection of self-permissive /
+ * identity-less / analysis-hostile rulesets (spec §9) is the Cedar-CLI
+ * static-analysis registration gate (sub-plan 03e), not this shim entrypoint.
+ *
  * # Safety
  * Pointers must be valid NUL-terminated C strings (or null => Error).
  * `out_diag` must point to a writable pointer.
