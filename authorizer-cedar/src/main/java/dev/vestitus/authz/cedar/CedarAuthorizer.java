@@ -21,7 +21,11 @@ import java.util.TreeSet;
  * <ul>
  *   <li>principal &rarr; {@code User::"<escaped principal.id>"}</li>
  *   <li>action    &rarr; {@code Action::"<escaped action>"}</li>
- *   <li>resource  &rarr; {@code Resource::"<mcpId>/<tool>/<field>"} (each escaped)</li>
+ *   <li>resource  &rarr; {@code Resource::"<mcpId>/<tool>/<field>"} — each
+ *       component MUST be free of {@code '/'} and control chars
+ *       (fail-closed Deny otherwise) so the composition is injective
+ *       (spec v0.2 §5.4 / Inv. 11); policies may instead match the
+ *       structured {@code context.mcp}/{@code tool}/{@code field}.</li>
  *   <li>context_json &rarr; JSON object:
  *     {@code {"scopes":[...],"principal_attrs":{...},"resource_tags":{...},
  *     "mcp":"...","tool":"...","field":"...","request":{...}}}</li>
@@ -60,6 +64,12 @@ public final class CedarAuthorizer implements Authorizer {
             Principal p = request.principal();
             ResourceRef r = request.resource();
 
+            if (unsafeComponent(r.mcpId())
+                    || unsafeComponent(r.tool())
+                    || unsafeComponent(r.field())) {
+                return AuthorizationDecision.deny(INJECTIVITY_DENY_REASON);
+            }
+
             String principalUid = "User::\"" + cedarId(p.id()) + "\"";
             String actionUid    = "Action::\"" + cedarId(request.action()) + "\"";
             String resourceUid  = "Resource::\"" + cedarId(
@@ -85,6 +95,30 @@ public final class CedarAuthorizer implements Authorizer {
             return AuthorizationDecision.deny(
                 "cedar authorizer error (fail-closed): " + t.getClass().getSimpleName());
         }
+    }
+
+    /** Components composing the resource UID must be unambiguous (spec v0.2 §5.4 / Inv. 11). */
+    private static final String INJECTIVITY_DENY_REASON =
+        "resource-identity injectivity violation (fail-closed): a resource "
+        + "component (mcpId/tool/field) contains '/' or a control character "
+        + "(spec 5.4/Inv.11)";
+
+    /**
+     * A resource component is unsafe to compose into the Cedar resource UID
+     * if it contains the join delimiter {@code '/'} or an ASCII control
+     * character. Rejecting the delimiter makes the
+     * {@code mcpId/tool/field} composition injective over the allowed input
+     * domain (no two distinct triples can collide to one UID); control chars
+     * are rejected as defence-in-depth at the mapping boundary.
+     */
+    private static boolean unsafeComponent(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '/' || c < 0x20) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Escape a Cedar entity-id literal body: backslash and quote. */

@@ -99,4 +99,47 @@ class CedarAuthorizerTest {
             req("alice\" || true || \"", "read", Set.of("read"), Map.of()));
         assertFalse(d.allowed());
     }
+
+    @Test
+    void slashInResourceComponentDeniedFailClosed() {
+        var authz = new CedarAuthorizer(resource("test-policy.cedar"));
+        AuthorizationDecision d = authz.authorize(new AuthorizationRequest(
+            new Principal("alice", Set.of("read"), Map.of()),
+            "read",
+            new ResourceRef("mcp-a/files", "contents", "x", Map.of()),
+            Map.of()));
+        assertFalse(d.allowed());
+        assertInstanceOf(AuthorizationDecision.Deny.class, d);
+        assertTrue(((AuthorizationDecision.Deny) d).reason().toLowerCase().contains("injectiv"));
+    }
+
+    @Test
+    void collidingResourceTriplesAreNotInterchangeable() {
+        var authz = new CedarAuthorizer(resource("test-policy.cedar"));
+        // Both would naively join to "mcp-a/files/contents" and match the
+        // policy's Resource::"mcp-a/files/contents" permit — the injectivity
+        // guard must reject both so neither can alias to the other.
+        AuthorizationDecision a = authz.authorize(new AuthorizationRequest(
+            new Principal("alice", Set.of("read"), Map.of()), "read",
+            new ResourceRef("mcp-a/files", "contents", "x", Map.of()), Map.of()));
+        AuthorizationDecision b = authz.authorize(new AuthorizationRequest(
+            new Principal("alice", Set.of("read"), Map.of()), "read",
+            new ResourceRef("mcp-a", "files", "contents/x", Map.of()), Map.of()));
+        assertFalse(a.allowed());
+        assertFalse(b.allowed());
+        assertInstanceOf(AuthorizationDecision.Deny.class, a);
+        assertInstanceOf(AuthorizationDecision.Deny.class, b);
+    }
+
+    @Test
+    void controlCharInResourceComponentDeniedFailClosed() {
+        var authz = new CedarAuthorizer(resource("test-policy.cedar"));
+        AuthorizationDecision d = authz.authorize(new AuthorizationRequest(
+            new Principal("alice", Set.of("read"), Map.of()),
+            "read",
+            new ResourceRef("mcp-a", "files", "cont\nents", Map.of()),
+            Map.of()));
+        assertFalse(d.allowed());
+        assertInstanceOf(AuthorizationDecision.Deny.class, d);
+    }
 }
