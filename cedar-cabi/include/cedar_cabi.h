@@ -60,6 +60,20 @@ CedarResult cedar_is_authorized(const char *policies,
                                 const char *entities_json,
                                 char **out_diag);
 
+/**
+ * Validate a Cedar policy set against a schema (registration-time gate).
+ * Fail-closed: `Valid` (2) ONLY when validation passes cleanly; `Invalid` (3)
+ * with the validation errors in `*out_diag`; `Error` (-1) on null args, an
+ * unparseable schema/policy, or a panic (message in `*out_diag`). The non-Valid
+ * diagnostics string lets the caller log + emit a reason-labeled metric
+ * (spec §6 inv.7). `schema_src` is Cedar human schema syntax (`.cedarschema`).
+ *
+ * # Safety
+ * Pointers must be valid NUL-terminated C strings (or null => Error).
+ * `out_diag` must point to a writable pointer.
+ */
+CedarResult cedar_validate(const char *schema_src, const char *policies_src, char **out_diag);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus

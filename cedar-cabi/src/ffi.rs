@@ -5,7 +5,7 @@
 
 use std::ffi::{c_char, CStr, CString};
 use std::ptr;
-use cedar_policy::{Authorizer, Context, Decision, Entities, EntityUid, PolicySet, Request};
+use cedar_policy::{Authorizer, Context, Decision, Entities, EntityUid, PolicySet, Request, Schema, ValidationMode, Validator};
 use std::str::FromStr;
 
 // The C entrypoints rely on `catch_unwind` as the fail-closed boundary, which
@@ -176,6 +176,82 @@ pub unsafe extern "C" fn cedar_is_authorized(
     }
 }
 
+/// Validate a Cedar policy set against a schema (registration-time gate).
+/// Fail-closed: `Valid` (2) ONLY when validation passes cleanly; `Invalid` (3)
+/// with the validation errors in `*out_diag`; `Error` (-1) on null args, an
+/// unparseable schema/policy, or a panic (message in `*out_diag`). The non-Valid
+/// diagnostics string lets the caller log + emit a reason-labeled metric
+/// (spec §6 inv.7). `schema_src` is Cedar human schema syntax (`.cedarschema`).
+///
+/// # Safety
+/// Pointers must be valid NUL-terminated C strings (or null => Error).
+/// `out_diag` must point to a writable pointer.
+#[no_mangle]
+pub unsafe extern "C" fn cedar_validate(
+    schema_src: *const c_char,
+    policies_src: *const c_char,
+    out_diag: *mut *mut c_char,
+) -> CedarResult {
+    if out_diag.is_null() {
+        return CedarResult::Error;
+    }
+    let out = &mut *out_diag;
+    *out = ptr::null_mut();
+
+    let inputs = (|| {
+        Ok::<_, String>((cstr_in(schema_src)?, cstr_in(policies_src)?))
+    })();
+    let (schema_s, pol_s) = match inputs {
+        Ok(v) => v,
+        Err(e) => {
+            *out = into_c_string(&e);
+            return CedarResult::Error;
+        }
+    };
+
+    let result: Result<(CedarResult, Option<String>), String> =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let schema =
+                Schema::from_str(&schema_s).map_err(|e| format!("schema parse error: {e}"))?;
+            let pset =
+                PolicySet::from_str(&pol_s).map_err(|e| format!("policy parse error: {e}"))?;
+            let vr = Validator::new(schema).validate(&pset, ValidationMode::default());
+            if vr.validation_passed() {
+                Ok((CedarResult::Valid, None))
+            } else {
+                let msgs: Vec<String> =
+                    vr.validation_errors().map(|e| e.to_string()).collect();
+                Ok((CedarResult::Invalid, Some(msgs.join("; "))))
+            }
+        }))
+        .unwrap_or_else(|p| {
+            let m = p
+                .downcast_ref::<&str>()
+                .map(|s| s.to_string())
+                .or_else(|| p.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unknown".to_string());
+            Err(format!("panic in cedar-cabi: {m}"))
+        });
+
+    match result {
+        Ok((CedarResult::Valid, _)) => CedarResult::Valid,
+        Ok((CedarResult::Invalid, diag)) => {
+            if let Some(d) = diag {
+                *out = into_c_string(&d);
+            }
+            CedarResult::Invalid
+        }
+        Ok((other, _)) => {
+            *out = into_c_string(&format!("unexpected code {other:?} (fail-closed)"));
+            CedarResult::Error
+        }
+        Err(msg) => {
+            *out = into_c_string(&msg);
+            CedarResult::Error
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,5 +393,60 @@ mod tests {
         let got = unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned();
         assert_eq!(got, "bad?msg");
         unsafe { cedar_string_free(p) };
+    }
+
+    fn call_validate(schema: &str, policies: &str) -> (CedarResult, Option<String>) {
+        let (s, p) = (cs(schema), cs(policies));
+        let mut diag: *mut c_char = ptr::null_mut();
+        let code = unsafe { cedar_validate(s.as_ptr(), p.as_ptr(), &mut diag) };
+        let d = if diag.is_null() { None } else {
+            let m = unsafe { CStr::from_ptr(diag) }.to_string_lossy().into_owned();
+            unsafe { cedar_string_free(diag) };
+            Some(m)
+        };
+        (code, d)
+    }
+
+    const HELLO_SCHEMA: &str = r#"
+        entity User;
+        entity Resource;
+        action "view" appliesTo { principal: User, resource: Resource };
+    "#;
+
+    #[test]
+    fn well_typed_policy_is_valid() {
+        let (code, _) = call_validate(
+            HELLO_SCHEMA,
+            r#"permit(principal == User::"alice", action == Action::"view", resource == Resource::"doc1");"#);
+        assert_eq!(code, CedarResult::Valid);
+    }
+
+    #[test]
+    fn ill_typed_policy_is_invalid_with_messages() {
+        let (code, diag) = call_validate(
+            HELLO_SCHEMA,
+            r#"permit(principal == User::"alice", action == Action::"delete", resource == Resource::"doc1");"#);
+        assert_eq!(code, CedarResult::Invalid);
+        assert!(diag.unwrap_or_default().len() > 0, "invalid result must carry messages");
+    }
+
+    #[test]
+    fn unparseable_schema_errors() {
+        let (code, _) = call_validate("this is not a schema", r#"permit(principal, action, resource);"#);
+        assert_eq!(code, CedarResult::Error);
+    }
+
+    #[test]
+    fn unparseable_policy_errors() {
+        let (code, _) = call_validate(HELLO_SCHEMA, "not a policy");
+        assert_eq!(code, CedarResult::Error);
+    }
+
+    #[test]
+    fn null_out_diag_validate_errors() {
+        let (s, p) = (cs(HELLO_SCHEMA), cs(r#"permit(principal, action, resource);"#));
+        let code = unsafe { cedar_validate(s.as_ptr(), p.as_ptr(), ptr::null_mut()) };
+        assert_eq!(code, CedarResult::Error);
+        assert_ne!(code, CedarResult::Valid);
     }
 }
