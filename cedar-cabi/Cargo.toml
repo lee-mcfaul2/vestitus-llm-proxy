@@ -4,9 +4,13 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "vestitus self-built C-ABI shim over a commit-pinned cedar-policy (03a: probe only)"
+build = "build.rs"
 
 [lib]
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 cedar-policy = { git = "https://github.com/cedar-policy/cedar", rev = "c38e789101f0aec67651f976d29fc886009b3836" }
+
+[build-dependencies]
+cbindgen = "=0.27.0"

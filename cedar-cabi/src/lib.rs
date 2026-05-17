@@ -37,3 +37,13 @@ mod tests {
         assert_eq!(ans.decision(), Decision::Deny);
     }
 }
+
+#[cfg(test)]
+mod header_tests {
+    #[test]
+    fn generated_header_exists_and_has_guard() {
+        let h = include_str!("../include/cedar_cabi.h");
+        assert!(h.contains("CEDAR_CABI_H"), "header missing include guard");
+        assert!(h.contains("cedar_string_free"), "header missing cedar_string_free decl");
+    }
+}
