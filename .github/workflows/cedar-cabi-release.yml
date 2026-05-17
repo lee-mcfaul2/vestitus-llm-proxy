@@ -9,10 +9,6 @@ on:
 
 permissions: {}
 
-env:
-  # SHA-pinned hermetic build container (published by cedar-cabi-build-container.yml).
-  CEDAR_BUILD_IMAGE: ghcr.io/lee-mcfaul2/cedar-cabi-build@sha256:REPLACE_AFTER_FIRST_CONTAINER_PUBLISH
-
 jobs:
   preflight:
     name: Enforce tag-ref dispatch
@@ -39,7 +35,9 @@ jobs:
     permissions:
       contents: read            # NO id-token, NO attestations here by design
     container:
-      image: ${{ env.CEDAR_BUILD_IMAGE }}   # SHA-pinned hermetic env
+      # SHA-pinned hermetic build container (published by cedar-cabi-build-container.yml).
+      # Pinned by immutable @sha256: digest; the env context is unavailable here.
+      image: ghcr.io/lee-mcfaul2/cedar-cabi-build@sha256:REPLACE_AFTER_FIRST_CONTAINER_PUBLISH
     steps:
       - name: Checkout the tag
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2

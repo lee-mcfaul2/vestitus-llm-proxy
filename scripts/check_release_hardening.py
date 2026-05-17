@@ -6,12 +6,17 @@ the two committed workflow files. Does NOT parse YAML and does NOT compile
 anything. Collects every violation, prints all of them, then exits non-zero if
 any check failed.
 
+The release workflow's hermetic build container is pinned by immutable
+@sha256: digest directly on the job's `container: image:` line (the env
+context is not available in jobs.<id>.container.image).
+
 Two-phase digest handling:
-  * default               -> CEDAR_BUILD_IMAGE may pin either the literal
+  * default               -> the container image may pin either the literal
                              placeholder REPLACE_AFTER_FIRST_CONTAINER_PUBLISH
                              or a real 64-hex digest (pre-pin state).
-  * --require-real-digest  -> CEDAR_BUILD_IMAGE must pin a real 64-lowercase-hex
-                             digest and must NOT be the placeholder.
+  * --require-real-digest  -> the container image must pin a real
+                             64-lowercase-hex digest and must NOT be the
+                             placeholder.
 """
 
 import argparse
@@ -112,13 +117,13 @@ def check_no_pipe_to_shell(failures, name, text):
 
 def check_cedar_build_image(failures, text, require_real_digest):
     m = re.search(
-        r"CEDAR_BUILD_IMAGE:\s*"
+        r"image:\s*"
         r"ghcr\.io/lee-mcfaul2/cedar-cabi-build@sha256:(\S+)",
         text,
     )
     if not m:
         failures.append(
-            "cedar-cabi-release.yml: CEDAR_BUILD_IMAGE must be "
+            "cedar-cabi-release.yml: the build job's container image must be "
             "ghcr.io/lee-mcfaul2/cedar-cabi-build@sha256:<digest>"
         )
         return
@@ -127,21 +132,21 @@ def check_cedar_build_image(failures, text, require_real_digest):
     if require_real_digest:
         if digest == PLACEHOLDER_DIGEST:
             failures.append(
-                "cedar-cabi-release.yml: CEDAR_BUILD_IMAGE still uses the "
-                "placeholder %r; --require-real-digest demands a real "
+                "cedar-cabi-release.yml: the build container image still uses "
+                "the placeholder %r; --require-real-digest demands a real "
                 "@sha256:<64-hex> digest (resolved by Task 4)"
                 % PLACEHOLDER_DIGEST
             )
         elif not real:
             failures.append(
-                "cedar-cabi-release.yml: CEDAR_BUILD_IMAGE digest %r is not "
-                "64 lowercase hex characters" % digest
+                "cedar-cabi-release.yml: the build container image digest %r "
+                "is not 64 lowercase hex characters" % digest
             )
     else:
         if digest != PLACEHOLDER_DIGEST and not real:
             failures.append(
-                "cedar-cabi-release.yml: CEDAR_BUILD_IMAGE digest %r is "
-                "neither the placeholder %r nor a real 64-hex digest"
+                "cedar-cabi-release.yml: the build container image digest %r "
+                "is neither the placeholder %r nor a real 64-hex digest"
                 % (digest, PLACEHOLDER_DIGEST)
             )
 
@@ -272,8 +277,8 @@ def main():
     parser.add_argument(
         "--require-real-digest",
         action="store_true",
-        help="Require CEDAR_BUILD_IMAGE to pin a real 64-hex sha256 digest "
-        "(not the pre-pin placeholder).",
+        help="Require the build container image to pin a real 64-hex sha256 "
+        "digest (not the pre-pin placeholder).",
     )
     args = parser.parse_args()
 
