@@ -53,4 +53,37 @@ class IdentityBundleDigesterTest {
         assertEquals(1, out.size());
         assertEquals("crm-mcp", out.get(0).mcpId());
     }
+
+    @Test
+    void bareObjectIsNotAnArrayAndFailsClosed() {
+        TrustException ex = assertThrows(TrustException.class,
+            () -> new IdentityBundleDigester().digest(utf8("{\"mcpId\":\"x\"}")));
+        assertTrue(ex.getMessage().contains("must be a JSON array"));
+    }
+
+    @Test
+    void jsonStringScalarIsNotAnArrayAndFailsClosed() {
+        assertThrows(TrustException.class,
+            () -> new IdentityBundleDigester().digest(utf8("\"x\"")));
+    }
+
+    @Test
+    void jsonNumberScalarIsNotAnArrayAndFailsClosed() {
+        assertThrows(TrustException.class,
+            () -> new IdentityBundleDigester().digest(utf8("5")));
+    }
+
+    @Test
+    void malformedJsonFailsClosed() {
+        TrustException ex = assertThrows(TrustException.class,
+            () -> new IdentityBundleDigester().digest(utf8("not json")));
+        assertTrue(ex.getMessage().contains("fail-closed"));
+    }
+
+    @Test
+    void nullPayloadFailsClosed() {
+        TrustException ex = assertThrows(TrustException.class,
+            () -> new IdentityBundleDigester().digest(null));
+        assertTrue(ex.getMessage().contains("non-null"));
+    }
 }
