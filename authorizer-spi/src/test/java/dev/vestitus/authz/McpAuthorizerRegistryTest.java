@@ -66,4 +66,72 @@ class McpAuthorizerRegistryTest {
         nullVal.put("mcp-a", null);
         assertThrows(IllegalArgumentException.class, () -> McpAuthorizerRegistry.of(nullVal));
     }
+
+    /** In-test allow-everything authorizer (proves a bound cell's Allow flows through). */
+    static final class AllowAuthorizer implements Authorizer {
+        @Override
+        public AuthorizationDecision authorize(AuthorizationRequest request) {
+            return AuthorizationDecision.allow();
+        }
+    }
+
+    @Test
+    void ofEntriesBuildsAWorkingRegistry() {
+        var reg = McpAuthorizerRegistry.ofEntries(java.util.List.of(
+            new RegistryEntry("mcp-a", new AllowAuthorizer()),
+            new RegistryEntry("mcp-b", new DenyAllAuthorizer())));
+        assertTrue(reg.authorize("mcp-a", req()).allowed());   // bound Allow
+        assertFalse(reg.authorize("mcp-b", req()).allowed());  // bound DenyAll
+        assertFalse(reg.authorize("mcp-x", req()).allowed());  // unbound -> deny
+    }
+
+    @Test
+    void ofEntriesRejectsDuplicateMcpIdFailClosed() {
+        var dup = java.util.List.of(
+            new RegistryEntry("mcp-a", new AllowAuthorizer()),
+            new RegistryEntry("mcp-a", new DenyAllAuthorizer()));
+        IllegalArgumentException ex = assertThrows(
+            IllegalArgumentException.class,
+            () -> McpAuthorizerRegistry.ofEntries(dup));
+        assertTrue(ex.getMessage().contains("duplicate mcpId"),
+            "fail-closed message must name the duplicate mcpId: " + ex.getMessage());
+    }
+
+    @Test
+    void ofEntriesEmptyListYieldsDenyAllNotAnError() {
+        var reg = McpAuthorizerRegistry.ofEntries(java.util.List.of());
+        // set-policy (is empty admissible) is the CALLER's per ADR-003 D6;
+        // here an empty generation is a valid fail-closed deny-all, NOT an exception.
+        assertFalse(reg.authorize("mcp-a", req()).allowed());
+        assertFalse(reg.authorize("anything", req()).allowed());
+    }
+
+    @Test
+    void ofEntriesNullListIsRejected() {
+        assertThrows(IllegalArgumentException.class,
+            () -> McpAuthorizerRegistry.ofEntries(null));
+    }
+
+    @Test
+    void ofEntriesNullElementIsRejectedFailClosed() {
+        var withNull = new java.util.ArrayList<RegistryEntry>();
+        withNull.add(new RegistryEntry("mcp-a", new AllowAuthorizer()));
+        withNull.add(null);
+        IllegalArgumentException ex = assertThrows(
+            IllegalArgumentException.class,
+            () -> McpAuthorizerRegistry.ofEntries(withNull));
+        assertTrue(ex.getMessage().contains("null entry")
+                && ex.getMessage().contains("fail-closed"),
+            "null element must be a fail-closed reject: " + ex.getMessage());
+    }
+
+    @Test
+    void perCellValidationStillAppliesViaRegistryEntry() {
+        // RegistryEntry's own compact-ctor blocks blank/null upstream of the
+        // map collapse; per-cell validation is preserved (defence in depth).
+        assertThrows(IllegalArgumentException.class,
+            () -> new RegistryEntry(" ", new AllowAuthorizer()));
+        assertThrows(IllegalArgumentException.class,
+            () -> new RegistryEntry("mcp-a", null));
+    }
 }

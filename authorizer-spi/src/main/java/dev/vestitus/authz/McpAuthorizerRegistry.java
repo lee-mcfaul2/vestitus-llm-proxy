@@ -1,5 +1,7 @@
 package dev.vestitus.authz;
 
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -47,5 +49,29 @@ public final class McpAuthorizerRegistry {
             return AuthorizationDecision.deny(
                 "authorizer error (fail-closed): " + t.getClass().getSimpleName());
         }
+    }
+
+    /**
+     * Builds one immutable registry generation from per-bundle entries
+     * (ADR-003 D8). A {@link RegistryEntry} list (not a {@code Map}) is the
+     * input so a duplicate {@code mcpId} is rejected fail-closed for the WHOLE
+     * generation rather than silently last-wins (ADR-003 D8 dup-reject /
+     * red-team CRITICAL-2). Reuses {@link #of(java.util.Map)} for per-cell
+     * validation + immutability. An empty list yields an empty deny-all
+     * generation, NOT an error — the set-policy (is empty admissible) and
+     * build-all-N-or-none are the caller's per ADR-003 D6 (Plan 05h).
+     */
+    public static McpAuthorizerRegistry ofEntries(List<RegistryEntry> entries) {
+        if (entries == null)
+            throw new IllegalArgumentException("entries required");
+        Map<String, Authorizer> map = new LinkedHashMap<>();
+        for (RegistryEntry e : entries) {
+            if (e == null)
+                throw new IllegalArgumentException("null entry in registry generation (fail-closed)");
+            if (map.putIfAbsent(e.mcpId(), e.authorizer()) != null)
+                throw new IllegalArgumentException(
+                    "duplicate mcpId " + e.mcpId() + " in registry generation (fail-closed)");
+        }
+        return of(map);
     }
 }
