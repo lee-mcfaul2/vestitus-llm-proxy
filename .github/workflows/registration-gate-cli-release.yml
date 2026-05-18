@@ -1,0 +1,150 @@
+name: registration-gate-cli attested release
+
+on:
+  push:
+    tags: ['registration-gate-cli-v*']
+  workflow_dispatch:
+    inputs:
+      tag: { description: 'registration-gate-cli-v* tag to build & attest', required: true }
+
+permissions: {}
+
+jobs:
+  preflight:
+    name: Enforce tag-ref dispatch
+    if: github.repository == 'lee-mcfaul2/vestitus-llm-proxy'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a registration-gate-cli tag ref
+        env: { REF: "${{ github.ref }}", IN: "${{ github.event.inputs.tag }}" }
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            case "$IN" in registration-gate-cli-v*) : ;; *) echo "::error::dispatch tag must match registration-gate-cli-v*"; exit 1;; esac
+          else
+            case "$REF" in refs/tags/registration-gate-cli-v*) : ;; *) echo "::error::only runs on refs/tags/registration-gate-cli-v*"; exit 1;; esac
+          fi
+
+  build:
+    name: In-container build (instance ${{ matrix.instance }})
+    needs: preflight
+    if: github.repository == 'lee-mcfaul2/vestitus-llm-proxy'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: { instance: [1, 2] }
+    permissions:
+      contents: read            # NO id-token, NO attestations here by design
+    container:
+      # SHA-pinned hermetic build container (published by
+      # registration-gate-cli-build-container.yml). Pinned by immutable
+      # @sha256: digest as an inline literal; the env context is
+      # unavailable in jobs.<id>.container.image.
+      image: ghcr.io/lee-mcfaul2/registration-gate-cli-build@sha256:REPLACE_AFTER_FIRST_CONTAINER_PUBLISH
+    steps:
+      - name: Checkout the tag
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          persist-credentials: false
+      - name: Reproducible build inside the pinned container
+        # The job runs inside the container, where GitHub's default
+        # run-shell is sh (dash) and lacks `pipefail`; bash ships in the
+        # maven:eclipse-temurin image and keeps the sha256sum|tee pipe
+        # fail-closed.
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The job runs as root inside the container; actions/checkout's
+          # safe.directory entry was written for a different user, so mark
+          # the checked-out workspace safe before invoking git.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          SDE="$(git show -s --format=%ct HEAD)"
+          export SOURCE_DATE_EPOCH="$SDE"
+          mvn -q -pl registration-gate-cli -am -DskipTests \
+            -Dproject.build.outputTimestamp="$SDE" package
+          JAR="registration-gate-cli/target/registration-gate-cli-0.1.0-SNAPSHOT.jar"
+          test -f "$JAR"
+          sha256sum "$JAR" | tee "registration-gate-cli.jar.sha256.${{ matrix.instance }}"
+      - name: Upload instance artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: registration-gate-cli-build-${{ matrix.instance }}
+          path: |
+            registration-gate-cli/target/registration-gate-cli-0.1.0-SNAPSHOT.jar
+            registration-gate-cli.jar.sha256.${{ matrix.instance }}
+          if-no-files-found: error
+          retention-days: 1
+
+  reproducibility-gate:
+    name: Byte-compare the two container builds
+    needs: build
+    if: github.repository == 'lee-mcfaul2/vestitus-llm-proxy'
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
+    steps:
+      - name: Download instance 1
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with: { name: registration-gate-cli-build-1, path: i1 }
+      - name: Download instance 2
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with: { name: registration-gate-cli-build-2, path: i2 }
+      - name: Fail closed unless byte-identical
+        run: |
+          set -euo pipefail
+          J1="i1/registration-gate-cli/target/registration-gate-cli-0.1.0-SNAPSHOT.jar"
+          J2="i2/registration-gate-cli/target/registration-gate-cli-0.1.0-SNAPSHOT.jar"
+          h1="$(sha256sum "$J1" | awk '{print $1}')"
+          h2="$(sha256sum "$J2" | awk '{print $1}')"
+          echo "instance1=$h1"; echo "instance2=$h2"
+          if [ "$h1" != "$h2" ]; then
+            echo "::error::registration-gate-cli jar NOT reproducible across container instances ($h1 != $h2)"; exit 1
+          fi
+          cmp "$J1" "$J2"
+          echo "REPRODUCIBLE=$h1" >> "$GITHUB_STEP_SUMMARY"
+
+  attest-sign-publish:
+    name: Attest + keyless cosign + release
+    needs: reproducibility-gate
+    if: github.repository == 'lee-mcfaul2/vestitus-llm-proxy'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download the verified-identical jar
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with: { name: registration-gate-cli-build-1, path: dist }
+      - name: SLSA build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32  # v4.1.0
+        with:
+          subject-path: dist/registration-gate-cli/target/registration-gate-cli-0.1.0-SNAPSHOT.jar
+      - name: Install cosign (pinned, checksum-verified, no curl|bash)
+        env: { COSIGN_VERSION: v3.0.6 }
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin"
+          base="https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}"
+          curl -fsSL -o /tmp/cosign "${base}/cosign-linux-amd64"
+          curl -fsSL -o /tmp/sums "${base}/cosign_checksums.txt"
+          want="$(grep ' cosign-linux-amd64$' /tmp/sums | awk '{print $1}')"
+          got="$(sha256sum /tmp/cosign | awk '{print $1}')"
+          [ -n "$want" ] && [ "$want" = "$got" ] || { echo "::error::cosign checksum mismatch"; exit 1; }
+          install -m 0755 /tmp/cosign "$HOME/.local/bin/cosign"; echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Keyless detached signature
+        run: |
+          set -euo pipefail
+          cd dist/registration-gate-cli/target
+          cosign sign-blob --yes --bundle registration-gate-cli-0.1.0-SNAPSHOT.jar.sigstore --new-bundle-format registration-gate-cli-0.1.0-SNAPSHOT.jar
+      - name: Publish attested jar to the release
+        env: { GH_TOKEN: "${{ github.token }}", TAG: "${{ github.event.inputs.tag || github.ref_name }}" }
+        run: |
+          set -euo pipefail
+          cd dist/registration-gate-cli/target
+          sha256sum registration-gate-cli-0.1.0-SNAPSHOT.jar > registration-gate-cli-0.1.0-SNAPSHOT.jar.sha256
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "registration-gate-cli attested gate artifact"
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            registration-gate-cli-0.1.0-SNAPSHOT.jar \
+            registration-gate-cli-0.1.0-SNAPSHOT.jar.sha256 \
+            registration-gate-cli-0.1.0-SNAPSHOT.jar.sigstore
