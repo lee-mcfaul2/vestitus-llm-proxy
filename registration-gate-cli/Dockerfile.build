@@ -4,7 +4,7 @@
 # module source is NOT baked in — the release workflow checks out the repo
 # and runs the reproducible `mvn package` inside this container so two
 # independent container instances produce a byte-identical jar.
-FROM maven:3.9-eclipse-temurin-25@sha256:REPLACE_AFTER_FIRST_CONTAINER_PUBLISH
+FROM maven:3.9-eclipse-temurin-25@sha256:1c3a703ab39fee7ac0880f46e6ccd22c0d701f17f0616e6e66a258ddc1c637d2
 
 # Deterministic locale / time for a reproducible build.
 ENV LC_ALL=C TZ=UTC SOURCE_DATE_EPOCH=1700000000
