@@ -13,8 +13,6 @@
     <module>mcp-schema</module>
     <module>authorizer-spi</module>
     <module>authorizer-cedar</module>
-    <module>registration-gate</module>
-    <module>registration-gate-cli</module>
   </modules>
 
   <properties>
