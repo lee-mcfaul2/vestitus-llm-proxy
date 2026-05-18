@@ -14,6 +14,7 @@
     <module>trust-spi</module>
     <module>bundle-digester-default</module>
     <module>bundle-runtime</module>
+    <module>bundle-verifier-sigstore</module>
     <module>authorizer-spi</module>
     <module>authorizer-cedar</module>
   </modules>
