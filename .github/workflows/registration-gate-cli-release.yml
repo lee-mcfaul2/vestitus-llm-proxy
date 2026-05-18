@@ -39,7 +39,7 @@ jobs:
       # registration-gate-cli-build-container.yml). Pinned by immutable
       # @sha256: digest as an inline literal; the env context is
       # unavailable in jobs.<id>.container.image.
-      image: ghcr.io/lee-mcfaul2/registration-gate-cli-build@sha256:REPLACE_AFTER_FIRST_CONTAINER_PUBLISH
+      image: ghcr.io/lee-mcfaul2/registration-gate-cli-build@sha256:5ac6c10d930146cdbc09dc20b92f7c1895dc591a80e38a1b29be2cdfb82b53e3
     steps:
       - name: Checkout the tag
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
