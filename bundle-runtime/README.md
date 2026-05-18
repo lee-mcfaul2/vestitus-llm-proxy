@@ -38,3 +38,44 @@ Depends on `trust-spi` (for the already-authenticated `BundleVersion`). No
 `mcp-schema` / Jackson dependency (this gate operates on a `long`-valued
 version, not on JSON). Build: `mvn -pl bundle-runtime -am test`. Mirrors
 `trust-spi` / `bundle-digester-default` discipline.
+
+## Minimum structural gate (ADR-003 D5 — Plan 05f)
+
+The salvaged, dual-reviewed, security-fix-looped structural lint (recovered
+verbatim from the removed `registration-gate`, package re-homed only) plus a
+new orchestrator, in the `dev.vestitus.bundle.gate` package:
+
+- `PolicyScanner` — string/comment-aware Cedar-source scanning primitives
+  (incl. `blankStringContents`, the security-fix-loop output that closes the
+  string-literal-decoy self-permissive bypass).
+- `IdentityPredicateLint` — rejects identity-less / self-permissive `permit`
+  fail-closed (conservative TEXTUAL lint; any unknown/ambiguous/unbalanced
+  shape rejects). A `when`/`unless` body textually referencing `principal`
+  passes — the semantic tautology (`when { principal == principal }`) is the
+  **named ADR-003 §4 boundary-2 residual** (the deleted cvc5/symbolic
+  follow-on), intentionally NOT caught.
+- `CrossMcpInjectivityCheck` — cross-MCP resource-identity injectivity
+  (Inv. 11): set-unique `mcpId`, `/`/control-char-free + intra-scope-unique
+  tool/field names so the `(mcpId, tool, field) -> Cedar UID` mapping is
+  injective across the assembled image.
+- `GateVerdict` — sealed `Pass | Reject(List<String> reasons)` ADT (mirrors
+  `authorizer-spi`'s `AuthorizationDecision` discipline).
+- `StructuralGate` — the ADR-003 D5 minimum gate over the already-digested
+  `List<McpSchema>`. Runs in the D6 core, downstream of `BundleDigester`
+  (Plan 05c) and BEFORE the Cedar compile (wired by Plan 05h). Per-schema
+  `IdentityPredicateLint` + cross-MCP `CrossMcpInjectivityCheck.checkSet`,
+  fail-closed (null set / any sub-check Reject / any Throwable => Reject;
+  reasons unioned). An empty list => Pass — set-admissibility is the caller's
+  per ADR-003 D6 (Plan 05h), not an error here.
+
+**Deliberate D5 boundary, not gaps:** the "reject a field missing PII or IAM"
+D5 clause is **already structurally enforced upstream** by `mcp-schema`
+`FieldDecl`'s compact constructor (a digested `McpSchema` cannot carry a
+PII/IAM-incomplete field), so it is not re-checked here. This gate is **NOT
+cvc5/symbolic**; the ADR-002 native-`cedar_validate` ceremony
+(`CedarValidateCheck`/`StaticAnalysisGate`) is deliberately NOT salvaged
+(ADR-003 D5/D10). It does not verify (05g), fetch/compile/orchestrate (05h),
+digest (05c), enforce no-rollback (05d), or set-atomically swap (05e).
+
+Adds a `dev.vestitus:mcp-schema` compile dependency (the lint operates on the
+digested `McpSchema` set). No native code, no surefire `argLine`.
