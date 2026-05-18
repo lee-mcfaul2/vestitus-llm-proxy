@@ -10,6 +10,7 @@
 
   <modules>
     <module>wire-schema</module>
+    <module>mcp-schema</module>
     <module>authorizer-spi</module>
     <module>authorizer-cedar</module>
   </modules>
