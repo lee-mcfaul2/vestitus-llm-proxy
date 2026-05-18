@@ -101,4 +101,29 @@ class IdentityPredicateLintTest {
             "permit(principal, action, resource) when { principal == principal };")
             .passed());
     }
+
+    @Test
+    void stringLiteralDecoyPrincipalIsRejected() {
+        GateVerdict v = lint(
+            "permit(principal, action, resource) when { context.x == \"principal\" };");
+        assertFalse(v.passed());
+        assertTrue(((GateVerdict.Reject) v).reasons().get(0)
+            .contains("self-permissive / identity-less permit"));
+    }
+
+    @Test
+    void realPrincipalReferenceInWhenStillPasses() {
+        assertTrue(lint(
+            "permit(principal, action, resource) when { principal.role == \"admin\" };")
+            .passed());
+    }
+
+    @Test
+    void deferredCvc5RealPrincipalTautologyStillPasses() {
+        // Real code refs to principal (not a string literal) — still the
+        // ADR-002 §7 deferred cvc5 residual, must still pass unchanged.
+        assertTrue(lint(
+            "permit(principal, action, resource) when { principal == principal };")
+            .passed());
+    }
 }

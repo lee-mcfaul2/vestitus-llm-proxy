@@ -73,4 +73,27 @@ class PolicyScannerTest {
         assertFalse(PolicyScanner.containsToken("principalId == 1", "principal"));
         assertTrue(PolicyScanner.containsToken("principal", "principal"));
     }
+
+    @Test
+    void blankStringContentsBlanksOnlyStringInteriors() {
+        // "principal" has 9 interior chars → 9 spaces; code outside untouched
+        assertEquals("a == \"         \" && principal",
+            PolicyScanner.blankStringContents("a == \"principal\" && principal"));
+        // principal outside the string is still found by containsToken
+        assertTrue(PolicyScanner.containsToken(
+            PolicyScanner.blankStringContents("a == \"principal\" && principal"), "principal"));
+        // principal inside the string is no longer found
+        assertFalse(PolicyScanner.containsToken(
+            PolicyScanner.blankStringContents("x == \"principal\""), "principal"));
+        // real principal reference outside string is preserved
+        assertTrue(PolicyScanner.containsToken(
+            PolicyScanner.blankStringContents("principal == \"x\""), "principal"));
+    }
+
+    @Test
+    void blankStringContentsEscapedQuoteCase() {
+        // "a\"b" — interior is the 4 chars: a \ " b → 4 spaces; kept: opening " and closing "
+        assertEquals("x == \"    \"",
+            PolicyScanner.blankStringContents("x == \"a\\\"b\""));
+    }
 }

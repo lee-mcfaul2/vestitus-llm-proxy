@@ -122,6 +122,29 @@ final class PolicyScanner {
         return out;
     }
 
+    /**
+     * Replace string-literal *contents* with spaces (the surrounding quotes are
+     * kept) so a textual token scan cannot match an identifier that lives inside
+     * a {@code "..."} literal. String-state tracking mirrors the other
+     * primitives (a {@code "} is escaped iff preceded by an odd backslash run).
+     */
+    static String blankStringContents(String s) {
+        StringBuilder out = new StringBuilder(s.length());
+        boolean inString = false;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (inString) {
+                boolean end = c == '"' && !escapedQuote(s, i);
+                out.append(end ? '"' : ' ');
+                if (end) inString = false;
+                continue;
+            }
+            if (c == '"') { inString = true; out.append('"'); continue; }
+            out.append(c);
+        }
+        return out.toString();
+    }
+
     /** True if {@code token} occurs in {@code s} bounded by non-identifier chars. */
     static boolean containsToken(String s, String token) {
         int from = 0;

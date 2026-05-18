@@ -106,7 +106,8 @@ public final class IdentityPredicateLint {
                 int[] span = PolicyScanner.balancedSpan(tail, brace, '{', '}');
                 if (span == null) break;
                 String body = tail.substring(span[0] + 1, span[1]);
-                if (PolicyScanner.containsToken(body, "principal")) return true;
+                if (PolicyScanner.containsToken(
+                        PolicyScanner.blankStringContents(body), "principal")) return true;
                 from = span[1] + 1;
             }
         }
