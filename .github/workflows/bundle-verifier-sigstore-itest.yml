@@ -81,7 +81,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: read
+      # NO id-token here: `gh attestation verify` needs no OIDC (it reads the
+      # attestation + uses GITHUB_TOKEN). `id-token` only accepts write/none —
+      # `id-token: read` is invalid GitHub schema and fails the run at startup.
       attestations: read
     steps:
       - name: Checkout the tag
