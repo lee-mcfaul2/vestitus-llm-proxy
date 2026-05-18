@@ -1,0 +1,13 @@
+# Hermetic build environment for the registration-gate-cli shaded jar
+# (Plan 04c / ADR-002 §4/§8 / cedar-cabi 03c pattern). Base pinned by
+# digest; the JDK 25 + Maven toolchain is the image's pinned toolchain. The
+# module source is NOT baked in — the release workflow checks out the repo
+# and runs the reproducible `mvn package` inside this container so two
+# independent container instances produce a byte-identical jar.
+FROM maven:3.9-eclipse-temurin-25@sha256:REPLACE_AFTER_FIRST_CONTAINER_PUBLISH
+
+# Deterministic locale / time for a reproducible build.
+ENV LC_ALL=C TZ=UTC SOURCE_DATE_EPOCH=1700000000
+WORKDIR /work
+# No ENTRYPOINT build step: the workflow drives `mvn package` so the same
+# image serves both build instances identically.
