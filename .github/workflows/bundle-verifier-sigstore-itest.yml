@@ -1,0 +1,123 @@
+name: bundle-verifier-sigstore integration test
+
+on:
+  push:
+    tags: ['bundle-verifier-sigstore-v*']
+  workflow_dispatch:
+    inputs:
+      tag: { description: 'bundle-verifier-sigstore-v* tag to sign & verify', required: true }
+
+permissions: {}
+
+jobs:
+  preflight:
+    name: Enforce tag-ref dispatch
+    if: github.repository == 'lee-mcfaul2/vestitus-llm-proxy'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a bundle-verifier-sigstore tag ref
+        env: { REF: "${{ github.ref }}", IN: "${{ github.event.inputs.tag }}" }
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            case "$IN" in bundle-verifier-sigstore-v*) : ;; *) echo "::error::dispatch tag must match bundle-verifier-sigstore-v*"; exit 1;; esac
+          else
+            case "$REF" in refs/tags/bundle-verifier-sigstore-v*) : ;; *) echo "::error::only runs on refs/tags/bundle-verifier-sigstore-v*"; exit 1;; esac
+          fi
+
+  sign:
+    name: Self-produce a cosign+SLSA-signed test bundle
+    needs: preflight
+    if: github.repository == 'lee-mcfaul2/vestitus-llm-proxy'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout the tag
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          persist-credentials: false
+      - name: Stage the committed test bundle
+        run: |
+          set -euo pipefail
+          cp bundle-verifier-sigstore/src/test/resources/testbundle/bundle.json bundle.json
+      - name: Install cosign (pinned, checksum-verified, no curl|bash)
+        env: { COSIGN_VERSION: v3.0.6 }
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin"
+          base="https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}"
+          curl -fsSL -o /tmp/cosign "${base}/cosign-linux-amd64"
+          curl -fsSL -o /tmp/sums "${base}/cosign_checksums.txt"
+          want="$(grep ' cosign-linux-amd64$' /tmp/sums | awk '{print $1}')"
+          got="$(sha256sum /tmp/cosign | awk '{print $1}')"
+          [ -n "$want" ] && [ "$want" = "$got" ] || { echo "::error::cosign checksum mismatch"; exit 1; }
+          install -m 0755 /tmp/cosign "$HOME/.local/bin/cosign"; echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Keyless sign the test bundle
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes --bundle bundle.json.sigstore --new-bundle-format bundle.json
+      - name: SLSA build provenance over the test bundle
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32  # v4.1.0
+        with:
+          subject-path: bundle.json
+      - name: Upload the signed bundle artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: signed-test-bundle
+          path: |
+            bundle.json
+            bundle.json.sigstore
+          if-no-files-found: error
+          retention-days: 1
+
+  verify:
+    name: Real cosign+gh verify via the CI-only JUnit itest
+    needs: sign
+    if: github.repository == 'lee-mcfaul2/vestitus-llm-proxy'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: read
+      attestations: read
+    steps:
+      - name: Checkout the tag
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          persist-credentials: false
+      - name: Download the signed bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with: { name: signed-test-bundle, path: signed }
+      - name: Install cosign (pinned, checksum-verified, no curl|bash)
+        env: { COSIGN_VERSION: v3.0.6 }
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin"
+          base="https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}"
+          curl -fsSL -o /tmp/cosign "${base}/cosign-linux-amd64"
+          curl -fsSL -o /tmp/sums "${base}/cosign_checksums.txt"
+          want="$(grep ' cosign-linux-amd64$' /tmp/sums | awk '{print $1}')"
+          got="$(sha256sum /tmp/cosign | awk '{print $1}')"
+          [ -n "$want" ] && [ "$want" = "$got" ] || { echo "::error::cosign checksum mismatch"; exit 1; }
+          install -m 0755 /tmp/cosign "$HOME/.local/bin/cosign"; echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Run the CI-only integration test against the real cosign/gh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VESTITUS_SIGSTORE_ITEST: "1"
+          VESTITUS_ITEST_BLOB: ${{ github.workspace }}/signed/bundle.json
+          VESTITUS_ITEST_SIG: ${{ github.workspace }}/signed/bundle.json.sigstore
+          VESTITUS_ITEST_COSIGN: ${{ env.HOME }}/.local/bin/cosign
+          VESTITUS_ITEST_GH: /usr/bin/gh
+          VESTITUS_ITEST_IDENTITY_REGEXP: '^https://github.com/lee-mcfaul2/vestitus-llm-proxy/.github/workflows/bundle-verifier-sigstore-itest.yml@refs/tags/bundle-verifier-sigstore-v.*$'
+          VESTITUS_ITEST_OWNER: lee-mcfaul2
+        run: |
+          set -euo pipefail
+          command -v cosign
+          command -v gh
+          mvn -q -pl bundle-verifier-sigstore -am test \
+            -Dtest=SigstoreSlsaBundleVerifierItest \
+            -Dsurefire.failIfNoSpecifiedTests=false
