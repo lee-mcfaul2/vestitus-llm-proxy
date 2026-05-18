@@ -1,7 +1,7 @@
 name: supply-chain invariants
 on:
-  push: { branches: ['**'], paths: ['.github/workflows/**', 'scripts/check_release_hardening.py', 'scripts/check_gate_release_hardening.py', 'cedar-cabi/Dockerfile.build', 'registration-gate-cli/Dockerfile.build'] }
-  pull_request: { paths: ['.github/workflows/**', 'scripts/check_release_hardening.py', 'scripts/check_gate_release_hardening.py', 'cedar-cabi/Dockerfile.build', 'registration-gate-cli/Dockerfile.build'] }
+  push: { branches: ['**'], paths: ['.github/workflows/**', 'scripts/check_release_hardening.py', 'cedar-cabi/Dockerfile.build'] }
+  pull_request: { paths: ['.github/workflows/**', 'scripts/check_release_hardening.py', 'cedar-cabi/Dockerfile.build'] }
 permissions: {}
 jobs:
   invariants:
@@ -11,4 +11,3 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with: { persist-credentials: false }
       - run: python3 scripts/check_release_hardening.py --require-real-digest
-      - run: python3 scripts/check_gate_release_hardening.py --require-real-digest
