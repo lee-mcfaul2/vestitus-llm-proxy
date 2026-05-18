@@ -41,6 +41,9 @@ public final class FileVersionFloorStore implements VersionFloorStore {
                 Files.readString(path, StandardCharsets.UTF_8).trim();
             long value = Long.parseLong(raw);
             return Optional.of(new BundleVersion(value));
+        // NumberFormatException ⊂ IllegalArgumentException (covered) + BundleVersion's
+        // own negative-value IllegalArgumentException — do NOT re-add NumberFormatException
+        // (non-disjoint multi-catch will not compile).
         } catch (IOException | IllegalArgumentException e) {
             throw new VersionStoreException(
                 "persisted version floor is corrupt or unreadable: " + path,
@@ -64,6 +67,9 @@ public final class FileVersionFloorStore implements VersionFloorStore {
             Files.move(tmp, path,
                 StandardCopyOption.ATOMIC_MOVE,
                 StandardCopyOption.REPLACE_EXISTING);
+        // NumberFormatException ⊂ IllegalArgumentException (covered) + BundleVersion's
+        // own negative-value IllegalArgumentException — do NOT re-add NumberFormatException
+        // (non-disjoint multi-catch will not compile).
         } catch (IOException | IllegalArgumentException e) {
             throw new VersionStoreException(
                 "could not persist version floor: " + path, e);
