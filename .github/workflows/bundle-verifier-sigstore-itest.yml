@@ -91,6 +91,11 @@ jobs:
         with:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
           persist-credentials: false
+      - name: Set up JDK 25
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9  # v4.8.0
+        with:
+          distribution: temurin
+          java-version: '25'
       - name: Download the signed bundle
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with: { name: signed-test-bundle, path: signed }
@@ -112,7 +117,6 @@ jobs:
           VESTITUS_SIGSTORE_ITEST: "1"
           VESTITUS_ITEST_BLOB: ${{ github.workspace }}/signed/bundle.json
           VESTITUS_ITEST_SIG: ${{ github.workspace }}/signed/bundle.json.sigstore
-          VESTITUS_ITEST_COSIGN: ${{ env.HOME }}/.local/bin/cosign
           VESTITUS_ITEST_GH: /usr/bin/gh
           VESTITUS_ITEST_IDENTITY_REGEXP: '^https://github.com/lee-mcfaul2/vestitus-llm-proxy/.github/workflows/bundle-verifier-sigstore-itest.yml@refs/tags/bundle-verifier-sigstore-v.*$'
           VESTITUS_ITEST_OWNER: lee-mcfaul2
@@ -120,6 +124,9 @@ jobs:
           set -euo pipefail
           command -v cosign
           command -v gh
+          # Absolute cosign path for the verifier (the `env` context holds only
+          # workflow-defined vars, NOT the runner's $HOME — resolve it in-shell).
+          export VESTITUS_ITEST_COSIGN="$HOME/.local/bin/cosign"
           mvn -q -pl bundle-verifier-sigstore -am test \
             -Dtest=SigstoreSlsaBundleVerifierItest \
             -Dsurefire.failIfNoSpecifiedTests=false
