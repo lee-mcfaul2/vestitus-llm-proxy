@@ -12,6 +12,7 @@
     <module>wire-schema</module>
     <module>mcp-schema</module>
     <module>trust-spi</module>
+    <module>bundle-digester-default</module>
     <module>authorizer-spi</module>
     <module>authorizer-cedar</module>
   </modules>
