@@ -112,4 +112,25 @@ class IdentityBundleDigesterTest {
         assertThrows(UnsupportedOperationException.class,
             () -> out.add(null));
     }
+
+    @Test
+    void oversizedPayloadFailsClosedBeforeParse() {
+        // 17-byte payload against a 16-byte cap (not even valid JSON — proves
+        // the size check fires BEFORE any parse).
+        byte[] big = "01234567890123456".getBytes(StandardCharsets.UTF_8);
+        assertEquals(17, big.length);
+        TrustException ex = assertThrows(TrustException.class,
+            () -> new IdentityBundleDigester(16, 1024).digest(big));
+        assertTrue(ex.getMessage().contains("payload exceeds max bytes"));
+    }
+
+    @Test
+    void elementCountOverCapFailsClosed() {
+        // 3-element array against a 2-element cap; payload bytes well under
+        // the (8 MiB) byte cap so only the element-count gate fires.
+        String three = "[" + DOC + "," + DOC2 + "," + DOC + "]";
+        TrustException ex = assertThrows(TrustException.class,
+            () -> new IdentityBundleDigester(8_388_608, 2).digest(utf8(three)));
+        assertTrue(ex.getMessage().contains("element count exceeds max"));
+    }
 }
