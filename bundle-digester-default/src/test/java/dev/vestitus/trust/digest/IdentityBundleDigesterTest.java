@@ -86,4 +86,30 @@ class IdentityBundleDigesterTest {
             () -> new IdentityBundleDigester().digest(null));
         assertTrue(ex.getMessage().contains("non-null"));
     }
+
+    @Test
+    void docMissingRequiredPiiFieldFailsClosed() {
+        // Same shape as DOC but the field omits the required "pii" annotation.
+        String bad = """
+            {"schemaVersion":{"value":"1.0.0"},"mcpId":"crm-mcp","tools":[{"name":"findContact","description":"d","fields":[{"name":"email","iam":{"entitlement":"x"}}]}],"ruleset":{"text":"permit(principal == User::\\"a\\", action, resource);"},"cedarSchema":{"text":"entity User;"}}""";
+        TrustException ex = assertThrows(TrustException.class,
+            () -> new IdentityBundleDigester().digest(utf8("[" + bad + "]")));
+        assertTrue(ex.getMessage().contains("fail-closed"));
+    }
+
+    @Test
+    void emptyArrayYieldsEmptyImmutableList() {
+        List<McpSchema> out = new IdentityBundleDigester().digest(utf8("[]"));
+        assertTrue(out.isEmpty());
+        assertThrows(UnsupportedOperationException.class,
+            () -> out.add(null));
+    }
+
+    @Test
+    void nonEmptyResultIsImmutable() {
+        List<McpSchema> out =
+            new IdentityBundleDigester().digest(utf8("[" + DOC + "]"));
+        assertThrows(UnsupportedOperationException.class,
+            () -> out.add(null));
+    }
 }
