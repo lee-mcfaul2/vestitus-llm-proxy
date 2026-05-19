@@ -184,7 +184,7 @@ public final class HttpPiiTokenizerClient implements Tokenizer {
     // ---- internals -------------------------------------------------------
 
     private static boolean badUuid(String uuid) {
-        return uuid == null || uuid.isBlank();
+        return uuid == null || !UUID_RE.matcher(uuid).matches();
     }
 
     /**
