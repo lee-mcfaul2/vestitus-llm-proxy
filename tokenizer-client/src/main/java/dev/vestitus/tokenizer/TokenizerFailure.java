@@ -11,7 +11,7 @@ package dev.vestitus.tokenizer;
  * could echo a secret or PII. This failure value flows into audit and trace.
  */
 public record TokenizerFailure(FailureKind kind, String detail)
-        implements SessionOutcome {
+        implements SessionOutcome, TokenizeOutcome {
 
     public enum FailureKind {
         UNREACHABLE, TIMEOUT, RETRIABLE_EXHAUSTED, TERMINAL_ERROR, MALFORMED_RESPONSE
@@ -23,4 +23,7 @@ public record TokenizerFailure(FailureKind kind, String detail)
         if (detail == null || detail.isBlank())
             throw new IllegalArgumentException("failure detail required");
     }
+
+    @Override
+    public boolean ok() { return false; }
 }
