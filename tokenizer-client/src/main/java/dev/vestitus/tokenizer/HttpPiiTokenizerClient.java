@@ -217,6 +217,10 @@ public final class HttpPiiTokenizerClient implements Tokenizer {
             last = r;
             long remaining = deadlineNanos - System.nanoTime();
             if (!retry || i == attempts - 1 || remaining <= 0) {
+                // If the last attempt itself was a transport failure, propagate its
+                // kind (UNREACHABLE/TIMEOUT) rather than wrapping as RETRIABLE_EXHAUSTED.
+                if (last.failure != null && last.transportError)
+                    return new Resp(last.failure);
                 return new Resp(new TokenizerFailure(
                     TokenizerFailure.FailureKind.RETRIABLE_EXHAUSTED,
                     "retries exhausted (last status " + last.status + ")"));
