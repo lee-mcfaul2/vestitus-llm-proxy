@@ -36,7 +36,7 @@ public final class HttpPiiTokenizerClient implements Tokenizer {
     private final HttpClient http;
     private final TokenizerEndpointConfig cfg;
 
-    public HttpPiiTokenizerClient(HttpClient http, TokenizerEndpointConfig cfg) {
+    HttpPiiTokenizerClient(HttpClient http, TokenizerEndpointConfig cfg) {
         this.http = Objects.requireNonNull(http, "http");
         this.cfg = Objects.requireNonNull(cfg, "cfg");
     }
@@ -318,7 +318,6 @@ public final class HttpPiiTokenizerClient implements Tokenizer {
         final int status;
         final String body;
         final TokenizerFailure failure;
-        boolean retriable;
         boolean transportError;
 
         Resp(int status, String body) {
