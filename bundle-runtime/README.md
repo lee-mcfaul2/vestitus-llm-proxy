@@ -79,3 +79,43 @@ digest (05c), enforce no-rollback (05d), or set-atomically swap (05e).
 
 Adds a `dev.vestitus:mcp-schema` compile dependency (the lint operates on the
 digested `McpSchema` set). No native code, no surefire `argLine`.
+
+## Reload orchestrator (Plan 05h)
+
+The ADR-003 D6 runtime-pull capstone, in the `dev.vestitus.bundle.reload`
+package — it wires the already-merged pieces (05c digest, 05d no-rollback,
+05f structural gate, 05e generational registry, 05g verifier SPI) into one
+fail-closed, ALL-N-or-NONE reload:
+
+- `MonotonicClock` — the ONLY time source for the last-good window
+  (`System.nanoTime`-backed `SYSTEM`; tests inject a fake). Wall-clock is
+  never read, so a clock skew cannot widen or shrink the window.
+- `BundleSource` / `FetchResult` — the fetch seam (sealed
+  `Fetched | Unreachable`; never throws through). `HttpBundleSource` is the
+  default: GET a JSON array of base64 `{payload,signatureMaterial,sourceRef}`,
+  bounded body + request timeout, every failure mode mapped to `Unreachable`.
+- `PolicyCompiler` (in `authorizer-spi`) / `CedarPolicyCompiler` (in
+  `authorizer-cedar`) — compiles a vetted `McpSchema` to an `Authorizer`
+  behind a deterministic pre-native size/complexity bound; a breach throws
+  `PolicyCompileException` WITHOUT touching the engine.
+- `ReloadObserver` / `NoOpReloadObserver` — the rate-aggregated reload-lifecycle
+  audit, deliberately DECOUPLED from the per-request fail-closed authorize path
+  (`GenerationalRegistry` is untouched).
+- `ReloadConfig` — eagerly builds & retains a `VerificationConfig`, so an
+  unanchored identity pin or blank OIDC issuer fails FAST at construction
+  (startup pin validation), not at first reload.
+- `BundleReloadOrchestrator` — fetch -> per-bundle verify -> digest ->
+  aggregate -> single authenticated set version -> no-rollback gate ->
+  structural gate -> per-schema compile -> `McpAuthorizerRegistry.ofEntries`
+  -> atomic `GenerationalRegistry.install`. On ANY abort the prior generation
+  stays live (last-good); beyond the window or cold-start unreachable =>
+  fail-closed deny-all. A weak/sabotaged verifier cannot disable the
+  no-rollback or structural invariants — they run downstream of verify in
+  verifier-independent core code.
+
+**Deliberate D6 boundary, not a gap:** 05h adds NO new Maven module (subpackage
+of `bundle-runtime`), NO metrics library, NO runtime code-load (compile-time
+SPI seams only), and NO CI for this plan — it is all-local. The single
+real-native test is `CedarPolicyCompilerNativeTest` in `authorizer-cedar` (the
+vendored `.so` is already how that module tests). This closes the ADR-003
+runtime Cedar-bundle pull series.
