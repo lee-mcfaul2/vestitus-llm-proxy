@@ -282,7 +282,7 @@ public final class HttpPiiTokenizerClient implements Tokenizer {
                     "response body exceeds 64 KiB cap"));
             return new Resp(resp.statusCode(),
                 b == null ? "" : new String(b, StandardCharsets.UTF_8));
-        } catch (java.net.http.HttpConnectTimeoutException te) {
+        } catch (java.net.http.HttpTimeoutException te) {
             Resp r = new Resp(new TokenizerFailure(
                 TokenizerFailure.FailureKind.TIMEOUT, "connect/request timeout"));
             r.transportError = true;

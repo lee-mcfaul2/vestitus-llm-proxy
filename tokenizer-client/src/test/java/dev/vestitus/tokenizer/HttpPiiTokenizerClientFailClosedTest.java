@@ -93,4 +93,31 @@ class HttpPiiTokenizerClientFailClosedTest {
         assertEquals(TokenizerFailure.FailureKind.TERMINAL_ERROR, f.kind());
         assertTrue(f.detail().contains("uuid"));
     }
+
+    @Test
+    void requestTimeoutIsTimeout() throws Exception {
+        // Handler sleeps longer than the client request timeout before responding.
+        server = TlsTestSupport.startServer(
+            TlsTestSupport.load("server.p12"), "server", ex -> {
+                try { Thread.sleep(1200); } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+                send(ex, 200, "{\"token\":\"x\"}");
+            });
+        // Build config with a short request timeout so the test is fast.
+        // pinnedConfig hardcodes 5 s requestTimeout, so construct directly.
+        TokenizerEndpointConfig cfg = new TokenizerEndpointConfig(
+            java.net.URI.create(TlsTestSupport.baseUri(server)),
+            TlsTestSupport.trustOnly(TlsTestSupport.load("server.p12"), "server"),
+            TlsTestSupport.load("client.p12"),
+            TlsTestSupport.PASS,
+            java.time.Duration.ofSeconds(2),
+            java.time.Duration.ofMillis(300),
+            java.time.Duration.ofSeconds(900),
+            0,
+            java.time.Duration.ofMillis(750));
+        Tokenizer t = HttpPiiTokenizerClient.create(cfg);
+        TokenizerFailure f = (TokenizerFailure) t.tokenize(UUID, PiiType.SSN, "x");
+        assertEquals(TokenizerFailure.FailureKind.TIMEOUT, f.kind());
+    }
 }
