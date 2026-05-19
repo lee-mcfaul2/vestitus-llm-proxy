@@ -60,16 +60,29 @@ scope. It is named, not hidden.
 | Default digester      | Fail-closed bundle → schema digester with size caps and no polymorphic typing. |
 | Default verifier      | Sigstore keyless plus SLSA provenance verification, fail-closed.   |
 | Trust runtime core    | No-rollback gate, persisted version floor, structural gate, and the reload orchestrator (pull, verify, bind, digest, gate, compile, set-atomic install; all-or-none; bounded retries; last-good window on a monotonic clock; fail-closed). |
+| Tokenizer client      | Pluggable `Tokenizer` interface (begin/tokenize/detokenize/end session, sealed never-throw outcomes) plus a shipped HTTP implementation against the published pii-tokenizer contract: self-pinned mTLS, bounded retries within a hard latency budget, strict fail-closed parsing, no secret/PII in failure detail. |
 
 The runtime authorization and trust plane is complete end to end as a library
-and is exercised by the reactor test suite.
+and is exercised by the reactor test suite. The tokenizer client is built as a
+standalone library; it is wired into the request path by the gateway server
+(planned).
+
+The tokenizer is a **pluggable interface**, deliberately. The spec originally
+called for it to be non-pluggable on the reasoning that an in-process plugin
+could let the "PII must never aggregate in one component" invariant be
+configured away. That reasoning does not apply here: the load-bearing
+invariants (sole authorized caller, entitlement filtering before tokenization,
+PII removed before delivery) are enforced downstream in the gateway server, not
+in this client. The interface is a wire-contract and transport seam for
+testability and vendor independence; it cannot switch tokenization off, and the
+shipped implementation plus deployment (self-pinned mTLS, separate isolated
+service) preserve the original isolation intent.
 
 ### Planned, not yet built
 
 | Area                  | Intent                                                            |
 |-----------------------|-------------------------------------------------------------------|
 | Content inspection    | A configurable pipeline of transformers and detectors with a mandatory, non-removable security floor; fail-closed. |
-| Tokenizer client      | Client for the mandated external PII / codename tokenizer service. |
 | Additional authorizers| AuthZEN adapter and a PKI example, alongside the Cedar default.    |
 | Schema-artifact build | The MCP-side tooling that produces the signed schema artifact.    |
 | Gateway server        | The runnable PEP process: identity (OIDC / mTLS), authorization, tokenization, inspection, and audit wired into the request path. |
@@ -79,7 +92,8 @@ and is exercised by the reactor test suite.
 
 The next horizon is the request path: a runnable server that authenticates the
 subject, authorizes each tool call through the existing trust plane, applies the
-data-protection stages, and writes the audit record. The data-protection stages
-(tokenizer client, content inspection) and the additional authorizer adapters
-feed that server. The release surface — signed module jars and a signed
-container image — follows once the server has a stable shape.
+data-protection stages, and writes the audit record. The remaining
+data-protection stage (content inspection) and the additional authorizer
+adapters feed that server, alongside the already-built tokenizer client. The
+release surface — signed module jars and a signed container image — follows once
+the server has a stable shape.
