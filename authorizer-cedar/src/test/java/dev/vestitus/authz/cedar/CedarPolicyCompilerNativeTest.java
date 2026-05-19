@@ -10,7 +10,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class CedarPolicyCompilerItest {
+class CedarPolicyCompilerNativeTest {
 
     private static McpSchema schema(String ruleset) {
         return new McpSchema(McpSchemaVersion.CURRENT, "crm",
