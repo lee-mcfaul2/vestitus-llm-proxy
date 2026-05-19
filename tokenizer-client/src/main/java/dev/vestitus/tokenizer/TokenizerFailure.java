@@ -10,7 +10,8 @@ package dev.vestitus.tokenizer;
  * plaintext}, request/response headers, or any response-body substring that
  * could echo a secret or PII. This failure value flows into audit and trace.
  */
-public record TokenizerFailure(FailureKind kind, String detail) {
+public record TokenizerFailure(FailureKind kind, String detail)
+        implements SessionOutcome {
 
     public enum FailureKind {
         UNREACHABLE, TIMEOUT, RETRIABLE_EXHAUSTED, TERMINAL_ERROR, MALFORMED_RESPONSE
