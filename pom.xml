@@ -18,6 +18,7 @@
     <module>authorizer-cedar</module>
     <module>bundle-runtime</module>
     <module>tokenizer-client</module>
+    <module>inspection-spi</module>
   </modules>
 
   <properties>
