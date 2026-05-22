@@ -61,6 +61,7 @@ scope. It is named, not hidden.
 | Default verifier      | Sigstore keyless plus SLSA provenance verification, fail-closed.   |
 | Trust runtime core    | No-rollback gate, persisted version floor, structural gate, and the reload orchestrator (pull, verify, bind, digest, gate, compile, set-atomic install; all-or-none; bounded retries; last-good window on a monotonic clock; fail-closed). |
 | Tokenizer client      | Pluggable `Tokenizer` interface (begin/tokenize/detokenize/end session, sealed never-throw outcomes) plus a shipped HTTP implementation against the published pii-tokenizer contract: self-pinned mTLS, bounded retries within a hard latency budget, strict fail-closed parsing, no secret/PII in failure detail. |
+| Content inspection SPI| Per-request content-inspection contract: sealed `Stage` hierarchy (transformer / raw-span detector / semantic detector), sealed `Finding` ADT, sealed never-thrown stage outcomes, sealed `PipelineOutcome` seam, stateless fail-closed `PipelineExecutor`, and the assembly-time validator. The mandatory credential + PII floor is a compile-time constructor argument of `InspectionPipeline`, so a pipeline without the floor does not compile. No secret/PII value is reachable from any `PipelineOutcome` variant (reflection property test). |
 
 The runtime authorization and trust plane is complete end to end as a library
 and is exercised by the reactor test suite. The tokenizer client is built as a
@@ -82,7 +83,7 @@ service) preserve the original isolation intent.
 
 | Area                  | Intent                                                            |
 |-----------------------|-------------------------------------------------------------------|
-| Content inspection    | A configurable pipeline of transformers and detectors with a mandatory, non-removable security floor; fail-closed. |
+| Content inspection providers | The reference floor detectors (credential + PII regex) and the llm-guard semantic adapter, against the now-built `inspection-spi` seam. |
 | Additional authorizers| AuthZEN adapter and a PKI example, alongside the Cedar default.    |
 | Schema-artifact build | The MCP-side tooling that produces the signed schema artifact.    |
 | Gateway server        | The runnable PEP process: identity (OIDC / mTLS), authorization, tokenization, inspection, and audit wired into the request path. |
