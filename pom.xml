@@ -19,6 +19,7 @@
     <module>bundle-runtime</module>
     <module>tokenizer-client</module>
     <module>inspection-spi</module>
+    <module>inspection-reference</module>
   </modules>
 
   <properties>
