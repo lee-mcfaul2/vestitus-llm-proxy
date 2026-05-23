@@ -63,6 +63,7 @@ scope. It is named, not hidden.
 | Tokenizer client      | Pluggable `Tokenizer` interface (begin/tokenize/detokenize/end session, sealed never-throw outcomes) plus a shipped HTTP implementation against the published pii-tokenizer contract: self-pinned mTLS, bounded retries within a hard latency budget, strict fail-closed parsing, no secret/PII in failure detail. |
 | Content inspection SPI| Per-request content-inspection contract: sealed `Stage` hierarchy (transformer / raw-span detector / semantic detector), sealed `Finding` ADT, sealed never-thrown stage outcomes, sealed `PipelineOutcome` seam, stateless fail-closed `PipelineExecutor`, and the assembly-time validator. The mandatory credential + PII floor is a compile-time constructor argument of `InspectionPipeline`, so a pipeline without the floor does not compile. No secret/PII value is reachable from any `PipelineOutcome` variant (reflection property test). |
 | Content inspection floor | Pure-library `RawSpanDetector` reference implementations satisfying the structural floor: a regex credential detector (PEM private-key blocks, AWS access-key IDs, GitHub tokens, Google API keys, Slack tokens, JWT-shaped triplets) and a regex PII detector (email, US SSN with basic validity, NANP phone, Luhn-checked card numbers). Each PII finding carries its type in a stable `pii.*` `ReasonCode`; gateway-core owns the `ReasonCode -> tokenizer PiiType` mapping. Coverage-candor (novel formats are missed) is stated in package Javadoc and the module README and asserted by a documented-miss test. |
+| llm-guard semantic adapter | HTTP `SemanticDetector` adapter for Protect AI `llm-guard-api` — one configured scanner per detector, one HTTP POST per `inspect`, threshold-driven `Verdict(action)` / `Clean`. Pluggable `LlmGuardScannerApi` seam with a shipped `HttpLlmGuardClient` impl: self-pinned mTLS, transport-only retries within a hard latency budget, strict fail-closed Jackson parsing, never throws. Structurally cannot satisfy the floor (returns scores, not offsets — design-spec §1.1-2). |
 
 The runtime authorization and trust plane is complete end to end as a library
 and is exercised by the reactor test suite. The tokenizer client is built as a
@@ -84,7 +85,6 @@ service) preserve the original isolation intent.
 
 | Area                  | Intent                                                            |
 |-----------------------|-------------------------------------------------------------------|
-| llm-guard semantic adapter | An HTTP `SemanticDetector` adapter against a Protect AI `llm-guard-api` deployment — one configured scanner per `SemanticDetector`, self-pinned mTLS, bounded retries within a hard latency budget, strict fail-closed parsing. Slots into the now-built `inspection-spi` seam alongside the reference floor. |
 | Additional authorizers| AuthZEN adapter and a PKI example, alongside the Cedar default.    |
 | Schema-artifact build | The MCP-side tooling that produces the signed schema artifact.    |
 | Gateway server        | The runnable PEP process: identity (OIDC / mTLS), authorization, tokenization, inspection, and audit wired into the request path. |
